@@ -1,0 +1,120 @@
+package org.opensha.commons.calc;
+
+import static org.junit.Assert.assertEquals;
+
+import org.junit.Test;
+import org.opensha.commons.data.function.EvenlyDiscretizedFunc;
+
+public class ProbabilityMassFunctionCalcTest {
+	
+	// tolerance
+	double tolerance = 1e-6;
+	
+	@Test
+	public void probabilityMassFunctionCalcWithGaussianDistribution(){
+		
+		/**
+		 * This test compares the PMF for a Gaussian distribution
+		 * (mean zero, standard deviation one)
+		 * calculated using the method GaussianDistCalc.getExceedProb
+		 * using the formula PMF((I1+I2)/2) = POE(I1) - POE(I2) with
+		 * the PMF obtained using the method ProbabilityMassFunctionCalc.getPMFfromPOE
+		 * and passing as input a POE for a Gaussian distribution
+		 * obtained with the same method GaussianDistCalc.getExceedProb
+		 */
+		
+		// define probability of exceedance function
+		double minX = -9.0;
+		double maxX = 9.0;
+		int numVal = 19;
+		EvenlyDiscretizedFunc poe = calculatePOEfromGaussianDist(minX, maxX, numVal);
+		
+	    // compute probability mass function
+	    EvenlyDiscretizedFunc pmf = ProbabilityMassFunctionCalc.getPMFfromPOE(poe);
+	    
+	    // compare pmf values
+	    comparePMFs(pmf, poe);
+	}
+	
+	@Test
+	public void probabilityMassFunctionCalcWith2ValuesPOE(){
+		
+		/**
+		 * This test check the behaviour of the getPMFfromPOE method
+		 * when a POE with only 2 values is passed
+		 */
+	}
+	
+	@Test
+	public void probabilityMassFunctionCalcWithNullPOE(){
+		
+		/**
+		 * This test check the behaviour of the getPMFfromPOE method
+		 * when a null poe is passed
+		 */
+		
+		EvenlyDiscretizedFunc poe = null;
+		EvenlyDiscretizedFunc pmf = ProbabilityMassFunctionCalc.getPMFfromPOE(poe);
+		
+	}
+	
+	/**
+	 * Get probability of exceedence (poe) values for a Gaussian distribution
+	 * (mean=0,std=1) using the method GaussianDistCalc.getExceedProb
+	 * @param minX: minimum value for which computing the poe
+	 * @param maxX: maximum value for which computing the poe
+	 * @param numVal: number of values for which computing the poe (together with minX and maxX 
+	 * controls the spacing)
+	 * @return: probability of exceedence values in a EvenlyDiscretizerFunc object 
+	 */
+	private EvenlyDiscretizedFunc calculatePOEfromGaussianDist(double minX, double maxX, int numVal){
+		EvenlyDiscretizedFunc poe = new EvenlyDiscretizedFunc(minX, maxX, numVal);
+		for(int i=0;i<poe.getNum();i++){
+			double valX = poe.getX(i);
+			poe.set(i, GaussianDistCalc.getExceedProb(valX));
+		}
+		return poe;
+	}
+	
+	/**
+	 *  Get probability mass function (PMF) values for a Gaussian distribution
+	 *  (mean=0,std=1) using the GaussianDistCalc.getExceedProb method
+	 *  and using the formula PMF((I1+I2)/2) = POE(I1) - POE(I2) 
+	 * @param minX: minimum value for which calculating the PMF
+	 * @param maxX: maximum value for which calculating the PMF
+	 * @param numVal: number of values for which computing the PMF (together with
+	 * minX and maxX controls the spacing)
+	 * @return: probability mass function values in a EvenlyDiscretized object
+	 */
+	private EvenlyDiscretizedFunc getGaussianPMF(double minX, double maxX, int numVal){
+		EvenlyDiscretizedFunc pmf = new EvenlyDiscretizedFunc(minX, maxX, numVal);
+		double delta = pmf.getDelta();
+		for(int i=0;i<numVal;i++){
+			double x1 = pmf.getX(i)-delta/2;
+			double x2 = pmf.getX(i)+delta/2;
+			double val = GaussianDistCalc.getExceedProb(x1) - 
+	    	GaussianDistCalc.getExceedProb(x2);
+			pmf.set(i, val);
+		}
+		return pmf;
+	}
+	
+	/**
+	 * Compare probability mass functions
+	 * @param pmf1
+	 * @param pmf2
+	 */
+	private void comparePMFs(EvenlyDiscretizedFunc pmf1, EvenlyDiscretizedFunc pmf2){
+		int numVal1 = pmf1.getNum();
+		int numVal2 = pmf2.getNum();
+		assertEquals(numVal1, numVal2, tolerance);
+	    for(int i=0;i<numVal1;i++){
+	    	double x1 = pmf1.getX(i);
+	    	double x2 = pmf2.getX(i);
+	    	assertEquals(x1, x2, tolerance);
+	    	double y1 = pmf1.getY(i);
+	    	double y2 = pmf2.getY(i);
+	    	assertEquals(y1,y2,tolerance);
+	    }	
+	}
+}

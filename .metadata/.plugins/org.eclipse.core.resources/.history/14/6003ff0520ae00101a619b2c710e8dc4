@@ -1,0 +1,4928 @@
+package util;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.Map;
+import java.util.StringTokenizer;
+
+import org.opensha.commons.calc.magScalingRelations.magScalingRelImpl.WC1994_MagAreaRelationship;
+import org.opensha.commons.calc.magScalingRelations.magScalingRelImpl.WC1994_MagLengthRelationship;
+import org.opensha.commons.data.Site;
+import org.opensha.commons.data.TimeSpan;
+import org.opensha.commons.exceptions.FaultException;
+import org.opensha.commons.geo.BorderType;
+import org.opensha.commons.geo.Location;
+import org.opensha.commons.geo.LocationList;
+import org.opensha.commons.geo.LocationUtils;
+import org.opensha.commons.geo.Region;
+import org.opensha.sha.earthquake.EqkRupture;
+import org.opensha.sha.earthquake.ProbEqkRupture;
+import org.opensha.sha.earthquake.griddedForecast.MagFreqDistsForFocalMechs;
+import org.opensha.sha.earthquake.rupForecastImpl.FloatingPoissonFaultSource;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.GEM1ERF;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.SourceData.GEMAreaSourceData;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.SourceData.GEMFaultSourceData;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.SourceData.GEMPointSourceData;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.SourceData.GEMSourceData;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.SourceData.GEMSubductionFaultSourceData;
+import org.opensha.sha.faultSurface.ApproxEvenlyGriddedSurface;
+import org.opensha.sha.faultSurface.FaultTrace;
+import org.opensha.sha.faultSurface.StirlingGriddedSurface;
+import org.opensha.sha.magdist.GutenbergRichterMagFreqDist;
+import org.opensha.sha.magdist.IncrementalMagFreqDist;
+
+public class GmtFileWriter {
+
+	private static String gmtDir = "/Applications/GMT/GMT4.4.0/src/";
+	private static String eTopoFile = "/org/gem/data/etopo2.grd";
+	private static String cptFile = "/org/gem/data/mapping/cpt_hazardMap_gem.cpt";
+
+	/**
+	 * Plot Stochastic Event Set in a gmt file
+	 * 
+	 * @param eventSet
+	 * @param fileName
+	 * @throws IOException
+	 * @throws InterruptedException
+	 */
+	public static void plotStochasticEventSet(ArrayList<EqkRupture> eventSet,
+			String fileName) throws IOException, InterruptedException {
+
+		Map<String, Double> boundingBox = boundingBoxStochasticSet(eventSet);
+		double minLon = Math.floor(boundingBox.get("minLon")) - 0.5;
+		double maxLon = Math.ceil(boundingBox.get("maxLon")) + 0.3;
+		double minLat = Math.floor(boundingBox.get("minLat")) - 1.0;
+		double maxLat = Math.ceil(boundingBox.get("maxLat")) + 0.2;// +5.0;
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 5.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "-P";
+
+		FileWriter outFile = new FileWriter(new File(fileName));
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// // add topography
+		// command =
+		// gmtDir+"grdimage RegionHighRes.grd -R -J -B -CRegionGray.cpt -N -K";
+		// p = Runtime.getRuntime().exec(command);
+		// saveOutput(outFile,p);
+		// p.waitFor();
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K "
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Slightblue -P -K -O";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot rupture traces
+		File file = new File("ruptureTraces.dat");
+		FileWriter fileW = new FileWriter(file);
+		// for(EqkRupture rup:eventSet){
+		// if(rup.getRuptureSurface().getNumCols()>1){
+		// fileW.write(">\n");
+		// for(int
+		// i=0;i<rup.getRuptureSurface().getSurfacePerimeterLocsList().size();i++){
+		// Location loc =
+		// rup.getRuptureSurface().getSurfacePerimeterLocsList().get(i);
+		// fileW.write(loc.getLongitude()+" "+loc.getLatitude()+"\n");
+		// }
+		// fileW.write("\n");
+		// }
+		// }
+		// fileW.close();
+		// command = gmtDir+"psxy "+
+		// file.getAbsolutePath() + " "+
+		// region+" " +
+		// "-J"+projection+size+"i " +
+		// "-B"+annotationLon+"/"+annotationLat+" " +
+		// "-B:."+title + ":"+" "+
+		// "-M -Wthick -N -P -O -K";
+		// p = Runtime.getRuntime().exec(command);
+		// saveOutput(outFile,p);
+		// p.waitFor();
+
+		// // read polygon boundary
+		// LocationList ecuadorBoundary = new LocationList();
+		// BufferedReader poly =
+		// new BufferedReader(new FileReader(new File("xx-1.txt")));
+		// String coords = "";
+		// while((coords=poly.readLine())!=null){
+		// StringTokenizer st = new StringTokenizer(coords);
+		// double lon = Double.valueOf(st.nextToken());
+		// double lat = Double.valueOf(st.nextToken());
+		// ecuadorBoundary.add(new Location(lat,lon));
+		// }
+		// Region ecu = new Region(ecuadorBoundary, BorderType.MERCATOR_LINEAR);
+
+		// plot epicenters
+		file = new File("epicenters.dat");
+		fileW = new FileWriter(file);
+		// plot epicenters
+		for (EqkRupture rup : eventSet) {
+			Location hypo = rup.getRuptureSurface().getLocation(
+					(rup.getRuptureSurface().getNumRows() - 1) / 2,
+					(rup.getRuptureSurface().getNumCols() - 1) / 2);
+			// if(ecu.contains(hypo)){
+			double dim = Double.NaN;
+			double mag = rup.getMag();
+			if (mag < 5) {
+				dim = 0.05;
+			} else if (mag >= 5 && mag < 6) {
+				dim = 0.1;
+			} else if (mag >= 6 && mag < 7) {
+				dim = 0.2;
+			} else if (mag >= 7 && mag < 8) {
+				dim = 0.4;
+			} else if (mag >= 8) {
+				dim = 0.8;
+			}
+			fileW.write(hypo.getLongitude() + " " + hypo.getLatitude() + " "
+					+ dim + "\n");
+			// }
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-Sc -Wthinnest -Gred -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot legend
+		file = new File("legend.dat");
+		fileW = new FileWriter(file);
+		// fileW.write("H 9 1 T = 50 yr\n");
+		// fileW.write("D 0 1p\n");
+		// fileW.write("N 1\n");
+		// fileW.write("V 0 1p\n");
+		fileW.write("S 0.2i c 0.05c red 0.05p 0.4i M < 5\n");
+		fileW.write("G 0.4c\n");
+		fileW.write("S 0.2i c 0.1c red 0.05p 0.4i 5<= M < 6\n");
+		fileW.write("G 0.4c\n");
+		fileW.write("S 0.2i c 0.2c red 0.05p 0.4i 6<= M < 7\n");
+		fileW.write("G 0.4c\n");
+		fileW.write("S 0.2i c 0.4c red 0.05p 0.4i 7<= M < 8\n");
+		fileW.write("G 0.4c\n");
+		fileW.write("S 0.2i c 0.8c red 0.05p 0.4i M >= 8\n");
+		// fileW.write("V 0 1p\n");
+		// fileW.write("D 0 1p\n");
+		fileW.close();
+		command = gmtDir + "pslegend " + file.getAbsolutePath() + " -Dx"
+				+ (size / 6) + "i/+1.5i/" + size / 3 + "i/1.5i/TC -J -R -O -F"
+				+ " -Glightyellow -S";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		file = new File("legendScript.sh");
+		fileW = new FileWriter(file);
+		saveOutput(fileW, p);
+		fileW.close();
+		// go through the script and run commands
+		BufferedReader buffR = new BufferedReader(new FileReader(file));
+		String s = null;
+		StringTokenizer st = null;
+		while ((s = buffR.readLine()) != null) {
+			if (s.startsWith("psbasemap") || s.startsWith("psxy")
+					|| s.startsWith("pstext")) {
+				command = gmtDir + s;
+				p = Runtime.getRuntime().exec(command);
+				saveOutput(outFile, p);
+				p.waitFor();
+			}
+			if (s.contains(" | ")) {
+				st = new StringTokenizer(s, "|");
+				String c1 = st.nextToken().trim();
+				c1 = c1.replace("'", "");
+				p = Runtime.getRuntime().exec(c1);
+				File f = new File("out.txt");
+				FileWriter fw = new FileWriter(f);
+				saveOutput(fw, p);
+				fw.close();
+				p.waitFor();
+				String c2 = gmtDir + st.nextToken().trim() + " out.txt";
+				p = Runtime.getRuntime().exec(c2);
+				saveOutput(outFile, p);
+				p.waitFor();
+			}
+			if (s.contains(" > ")) {
+				// execute the first command
+				st = new StringTokenizer(s, ">");
+				String c1 = st.nextToken().trim();
+				String c2 = st.nextToken().trim();
+				p = Runtime.getRuntime().exec(c1);
+				FileWriter fw = new FileWriter(new File(c2));
+				saveOutput(fw, p);
+				fw.close();
+				p.waitFor();
+			}
+			if (s.contains(" >> ")) {
+				// execute the first command
+				st = new StringTokenizer(s, ">>");
+				String c1 = st.nextToken().trim();
+				String c2 = st.nextToken().trim();
+				p = Runtime.getRuntime().exec(c1);
+				FileWriter fw = new FileWriter(new File(c2));
+				saveOutput(fw, p);
+				fw.close();
+				p.waitFor();
+			}
+		}
+
+		outFile.close();
+
+	}
+
+	public static void plotGroundMotionField(Map<Site, Double> map,
+			EqkRupture rup, double gridSampling, String fileName,
+			String groundMotionParam, Double groundMotionMaxVal, Double deltaCpt)
+			throws IOException, InterruptedException {
+		Map<String, Double> boundingBox = boundingBoxGroundMotionField(map);
+		double minLon = boundingBox.get("minLon");// Math.floor(boundingBox.get("minLon"));//
+		double maxLon = boundingBox.get("maxLon");// Math.ceil(boundingBox.get("maxLon"));//
+		double minLat = boundingBox.get("minLat");// Math.floor(boundingBox.get("minLat"));//
+		double maxLat = boundingBox.get("maxLat");// Math.ceil(boundingBox.get("maxLat"));//
+		double annotationLon = 1;
+		double annotationLat = 1;
+		String title = "";
+
+		double maxValue = maxValue(map);
+		if (groundMotionMaxVal != null)
+			maxValue = groundMotionMaxVal;
+
+		double minValue = 0.0;// minValue(map);
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 5;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "-P";
+
+		FileWriter outFile = new FileWriter(new File(fileName));
+		Process p = null;
+		String command = null;
+
+		// create xyz file with map values
+		File mapFile = new File("map.dat");
+		FileWriter fW = new FileWriter(mapFile);
+		for (Site site : map.keySet())
+			fW.write(site.getLocation().getLongitude() + " "
+					+ site.getLocation().getLatitude() + " "
+					+ Math.exp(map.get(site)) + "\n");
+		fW.close();
+
+		// create hazard map grid
+		command = gmtDir + "xyz2grd map.dat -N0 -I" + gridSampling * 60 + "m "
+				+ region + " -GMap.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample hazard map grid to higher resolution
+		command = gmtDir + "grdsample Map.grd -I5c/5c -Q -GMapHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt file
+		String cptDiscretization = Double.toString(maxValue / 10);
+		if (deltaCpt != null) {
+			cptDiscretization = Double.toString(deltaCpt);
+		}
+
+		System.out.println("min: " + minValue);
+		System.out.println("max :" + maxValue);
+		// command =
+		// gmtDir+"makecpt -C"+cptFile+" -T0.0/"+maxValue+"/"+cptDiscretization+"";
+		command = gmtDir + "makecpt -C" + cptFile + " -T" + minValue + "/"
+				+ maxValue + "/" + cptDiscretization + "";
+		FileWriter cptFile = new FileWriter(new File("Hazard.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I5c/5c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// // make color palette for topography
+		// command = gmtDir+"grd2cpt "+eTopoFile+" -Cgray -Z";
+		// p = Runtime.getRuntime().exec(command);
+		// FileWriter cptFile2 = new FileWriter(new File("RegionGray.cpt"));
+		// saveOutput(cptFile2,p);
+		// cptFile2.close();
+		// p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// // plot coast line
+		// command = gmtDir+"pscoast  " +
+		// region+" " +
+		// "-J"+projection+size+"i " +
+		// "-B"+annotationLon+"/"+annotationLat+" " +
+		// "-B:."+title + ":"+" "+
+		// "-Wthin -N1 -A1000 -Di -P -S -O -K";
+		// p = Runtime.getRuntime().exec(command);
+		// saveOutput(outFile,p);
+		// p.waitFor();
+
+		// plot hazard map
+		command = gmtDir + "grdimage MapHighRes.grd " + region + " " + "-J"
+				+ projection + size + "i "
+				+ "-IRegion_gradient.grd -CHazard.cpt -O -Sb -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// // plot topography
+		// command = gmtDir+"grdimage RegionHighRes.grd "+
+		// region+" "+
+		// "-J"+projection+size+"i "+
+		// "-IRegion_gradient.grd  -CRegionGray.cpt -O -Sb -K";
+		// p = Runtime.getRuntime().exec(command);
+		// saveOutput(outFile,p);
+		// p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot rupture boundary
+		File file = new File("ruptureBoundary.dat");
+		FileWriter fileW = new FileWriter(file);
+		for (Location loc : rup.getRuptureSurface()
+				.getSurfacePerimeterLocsList())
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -Wthick -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot rupture trace
+		file = new File("ruptureTrace.dat");
+		fileW = new FileWriter(file);
+		for (int i = 0; i < rup.getRuptureSurface().getNumCols(); i++) {
+			Location loc = rup.getRuptureSurface().get(0, i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -Wfat,red -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot color bar
+		double colorbarSpacing = 0.1;// new
+										// BigDecimal(maxValue/10).setScale(3,BigDecimal.ROUND_HALF_UP).doubleValue();
+		if (groundMotionMaxVal != null) {
+			colorbarSpacing = new BigDecimal(groundMotionMaxVal / 10).setScale(
+					2, BigDecimal.ROUND_HALF_UP).doubleValue();
+		}
+		command = gmtDir + "psscale -D6.0/-1.0/10c/0.4ch -N1 -O -K -B"
+				+ colorbarSpacing + "::/:" + groundMotionParam
+				+ ": -CHazard.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		outFile.close();
+	}
+
+	public static void plotHazardMap(Map<Site, Double> map, String fileName,
+			double gridSampling, String groundMotionParam,
+			Double groundMotionMaxVal, Double deltaCpt) throws IOException,
+			InterruptedException {// , EqkRupture rup, double gridSampling,
+									// String fileName, String
+									// groundMotionParam, Double
+									// groundMotionMaxVal, Double deltaCpt)
+									// throws IOException, InterruptedException{
+		Map<String, Double> boundingBox = boundingBoxGroundMotionField(map);
+		BigDecimal minLongitude = new BigDecimal(boundingBox.get("minLon"));
+		// minLongitude.setScale(2,BigDecimal.ROUND_HALF_UP).doubleValue();
+		BigDecimal maxLongitude = new BigDecimal(boundingBox.get("maxLon"));
+		// maxLongitude.setScale(2,BigDecimal.ROUND_HALF_UP);
+		BigDecimal minLatitude = new BigDecimal(boundingBox.get("minLat"));
+		// minLatitude.setScale(2,BigDecimal.ROUND_HALF_UP);
+		BigDecimal maxLatitude = new BigDecimal(boundingBox.get("maxLat"));
+		// maxLatitude.setScale(2,BigDecimal.ROUND_HALF_UP);
+		double minLon = minLongitude.setScale(1, BigDecimal.ROUND_HALF_UP)
+				.doubleValue();// boundingBox.get("minLon");
+		double maxLon = maxLongitude.setScale(1, BigDecimal.ROUND_HALF_UP)
+				.doubleValue();// boundingBox.get("maxLon");
+		double minLat = minLatitude.setScale(1, BigDecimal.ROUND_HALF_UP)
+				.doubleValue();// boundingBox.get("minLat");
+		double maxLat = maxLatitude.setScale(1, BigDecimal.ROUND_HALF_UP)
+				.doubleValue();// boundingBox.get("maxLat");
+		double annotationLon = 5.0;
+		double annotationLat = 5.0;
+		String title = "";
+
+		System.out.println("minLon: " + minLon);
+		System.out.println("maxLon: " + maxLon);
+		System.out.println("minLat: " + minLat);
+		System.out.println("maxLat: " + maxLat);
+
+		double maxValue = maxValue(map);
+		if (groundMotionMaxVal != null)
+			maxValue = groundMotionMaxVal;
+
+		double minValue = minValue(map);
+
+		System.out.println("max: " + maxValue);
+		System.out.println("max: " + minValue);
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 5.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "-P";
+
+		FileWriter outFile = new FileWriter(new File(fileName));
+		Process p = null;
+		String command = null;
+
+		// create xyz file with map values
+		File mapFile = new File("map.dat");
+		FileWriter fW = new FileWriter(mapFile);
+		for (Site site : map.keySet()) {
+			String data = String.format("%4.2f %4.2f %e", site.getLocation()
+					.getLongitude(), site.getLocation().getLatitude(), map
+					.get(site));
+			fW.write(data + "\n");
+		}
+		fW.close();
+
+		// create hazard map grid
+		command = gmtDir + "xyz2grd map.dat -N0 -I" + gridSampling * 60 + "m "
+				+ region + " -GMap.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample hazard map grid to higher resolution
+		command = gmtDir + "grdsample Map.grd -I30c/30c -Q -GMapHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt file
+		String cptDiscretization = Double.toString(maxValue / 10);
+		if (deltaCpt != null) {
+			cptDiscretization = Double.toString(deltaCpt);
+		}
+		command = gmtDir + "makecpt -C" + cptFile + " -T" + minValue + "/"
+				+ maxValue + "/" + cptDiscretization + "";
+		// command = gmtDir+"makecpt -C"+cptFile+" -Qo -T0.1/"+maxValue+"/3";
+		FileWriter cptFile = new FileWriter(new File("Hazard.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// // plot coast line
+		// command = gmtDir+"pscoast  " +
+		// region+" " +
+		// "-J"+projection+size+"i " +
+		// "-B"+annotationLon+"/"+annotationLat+" " +
+		// "-B:."+title + ":"+" "+
+		// "-Wthin -N1 -A10000 -Di -P -O -K";
+		// saveOutput(outFile,p);
+		// p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A10000 -Slightblue -Di -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+		//
+		// // clip values
+		// //psclip "+clipfile+" -R"+ext+" "+pov+" -m -JM -V -O -K >> tmp.eps
+		// command = gmtDir + "psclip xx-1.txt "+
+		// region+" " +
+		// "-J"+projection+size+"i " +
+		// "-B"+annotationLon+"/"+annotationLat+" " +
+		// "-B:."+title + ":"+" "+
+		// "  -M -V -O -K";
+		// p = Runtime.getRuntime().exec(command);
+		// saveOutput(outFile,p);
+		// p.waitFor();
+
+		// plot hazard map
+		command = gmtDir + "grdimage MapHighRes.grd " + region + " " + "-J"
+				+ projection + size + "i "
+				+ "-IRegion_gradient.grd -CHazard.cpt -O -Sb -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A10000 -Di -Slightblue -P -O -K";
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		// plot color bar
+		double colorbarSpacing = new BigDecimal(maxValue / 5).setScale(3,
+				BigDecimal.ROUND_HALF_UP).doubleValue();
+		if (groundMotionMaxVal != null) {
+			colorbarSpacing = new BigDecimal(groundMotionMaxVal / 5).setScale(
+					2, BigDecimal.ROUND_HALF_UP).doubleValue();
+		}
+		command = gmtDir + "psscale -D6.0/-1.0/10c/0.4ch -N1 -O -K -B"
+				+ colorbarSpacing + "::/:" + groundMotionParam
+				+ ": -CHazard.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(outFile, p);
+		p.waitFor();
+
+		outFile.close();
+	}
+
+	public static void plotPointSources(ArrayList<GEMPointSourceData> srcList,
+			double gridRes) throws IOException, InterruptedException {
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		double minTotMomentRate = Double.MAX_VALUE;
+		double maxTotMomentRate = -Double.MAX_VALUE;
+		double minMaxMag = Double.MAX_VALUE;
+		double maxMaxMag = -Double.MAX_VALUE;
+		double minOccurrenceRate = Double.MAX_VALUE;
+		double maxOccurrenceRate = -Double.MAX_VALUE;
+		double minMinMag = Double.MAX_VALUE;
+		double maxMinMag = -Double.MAX_VALUE;
+		for (GEMPointSourceData src : srcList) {
+			Location srcLoc = src.getHypoMagFreqDistAtLoc().getLocation();
+			if (srcLoc.getLongitude() < minLon)
+				minLon = srcLoc.getLongitude();
+			if (srcLoc.getLatitude() < minLat)
+				minLat = srcLoc.getLatitude();
+			if (srcLoc.getLongitude() > maxLon)
+				maxLon = srcLoc.getLongitude();
+			if (srcLoc.getLatitude() > maxLat)
+				maxLat = srcLoc.getLatitude();
+			double totMomentRate = src.getHypoMagFreqDistAtLoc()
+					.getFirstMagFreqDist().getTotalMomentRate();
+			double maxMag = src.getHypoMagFreqDistAtLoc().getFirstMagFreqDist()
+					.getMaxX();
+			double minMag = src.getHypoMagFreqDistAtLoc().getFirstMagFreqDist()
+					.getMinX();
+			double totIncrRate = src.getHypoMagFreqDistAtLoc()
+					.getFirstMagFreqDist().getTotalIncrRate();
+			if (totMomentRate < minTotMomentRate)
+				minTotMomentRate = totMomentRate;
+			if (totMomentRate > maxTotMomentRate)
+				maxTotMomentRate = totMomentRate;
+			if (maxMag < minMaxMag)
+				minMaxMag = maxMag;
+			if (maxMag > maxMaxMag)
+				maxMaxMag = maxMag;
+			if (minMag < minMinMag)
+				minMinMag = minMag;
+			if (minMag > maxMinMag)
+				maxMinMag = minMag;
+			if (totIncrRate < minOccurrenceRate)
+				minOccurrenceRate = totIncrRate;
+			if (totIncrRate > maxOccurrenceRate)
+				maxOccurrenceRate = totIncrRate;
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 6.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotS,
+								// FaultExceptionizeY;
+		String portrait = "";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		FileWriter momentRateFile = new FileWriter(new File(
+				"pointTotMomentRate.ps"));
+		FileWriter geometryFile = new FileWriter(new File("pointGeometry.ps"));
+		FileWriter maxMagFile = new FileWriter(new File("pointMaxMagnitude.ps"));
+		FileWriter occurrenceRateFile = new FileWriter(new File(
+				"pointOccurrenceRate.ps"));
+		FileWriter minMagFile = new FileWriter(new File("pointMinMagnitude.ps"));
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt for total moment rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minTotMomentRate
+				+ "/" + maxTotMomentRate + "/2";// +cptDiscretization+"";
+		FileWriter cptFaultFile = new FileWriter(
+				new File("pointMomentRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptTabel = readCptFile("pointMomentRate.cpt");
+
+		// make cpt for maximum magnitude
+		command = gmtDir + "makecpt -Cseis -I -N -T" + minMaxMag + "/"
+				+ maxMaxMag + "/0.1";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("AreaMaxMag.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptMaxMagTable = readCptFile("pointMaxMag.cpt");
+
+		// make cpt for occurrence rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minOccurrenceRate
+				+ "/" + maxOccurrenceRate + "/2";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("pointOccurrenceRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptOccurrenceRateTable = readCptFile("pointOccurrenceRate.cpt");
+
+		// make cpt for minimum magnitude
+		ArrayList<double[][]> cptMinMagTable = null;
+		if (minMinMag != maxMinMag) {
+			command = gmtDir + "makecpt -Cseis -I -N -T" + minMinMag + "/"
+					+ maxMinMag + "/0.1";// +cptDiscretization+"";
+			cptFaultFile = new FileWriter(new File("pointMinMag.cpt"));
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(cptFaultFile, p);
+			cptFaultFile.close();
+			p.waitFor();
+			// read cpt file
+			cptMinMagTable = readCptFile("pointMinMag.cpt");
+		}
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			command = gmtDir
+					+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+					+ region + " " + "-J" + projection + size + "i ";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot point location
+		File file = new File("pointLocations.dat");
+		FileWriter fileW = new FileWriter(file);
+		for (GEMPointSourceData src : srcList) {
+			Location loc = src.getHypoMagFreqDistAtLoc().getLocation();
+			IncrementalMagFreqDist mfd = src.getHypoMagFreqDistAtLoc()
+					.getFirstMagFreqDist();
+			fileW.write("> ");
+			double[] color = getColor(mfd.getTotalMomentRate(),
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		file = new File("poinLocations.dat");
+		fileW = new FileWriter(file);
+		for (GEMPointSourceData src : srcList) {
+			Location loc = src.getHypoMagFreqDistAtLoc().getLocation();
+			fileW.write(">\n");
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		file = new File("areaRegions.dat");
+		fileW = new FileWriter(file);
+		for (GEMPointSourceData src : srcList) {
+			LocationList border = new LocationList();
+			Location srcLoc = src.getHypoMagFreqDistAtLoc().getLocation();
+			border.add(new Location(srcLoc.getLatitude() + gridRes / 2, srcLoc
+					.getLongitude() - gridRes / 2));
+			border.add(new Location(srcLoc.getLatitude() + gridRes / 2, srcLoc
+					.getLongitude() + gridRes / 2));
+			border.add(new Location(srcLoc.getLatitude() - gridRes / 2, srcLoc
+					.getLongitude() + gridRes / 2));
+			border.add(new Location(srcLoc.getLatitude() - gridRes / 2, srcLoc
+					.getLongitude() - gridRes / 2));
+			Region reg = new Region(border, null);
+			GEMAreaSourceData area = new GEMAreaSourceData(src.getID(),
+					src.getName(), src.getTectReg(), reg,
+					new MagFreqDistsForFocalMechs(src.getHypoMagFreqDistAtLoc()
+							.getFirstMagFreqDist(), src
+							.getHypoMagFreqDistAtLoc().getFirstFocalMech()),
+					src.getAveRupTopVsMag(), src.getAveHypoDepth());
+			IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+					.getFirstMagFreqDist();
+			fileW.write("> ");
+			double[] color = getColor(mfd.getMaxX(), minMaxMag, maxMaxMag,
+					cptMaxMagTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+				Location loc = area.getRegion().getBorder().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+					+ " " + area.getRegion().getBorder().get(0).getLatitude()
+					+ "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault surfaces
+		file = new File("areaRegions.dat");
+		fileW = new FileWriter(file);
+		for (GEMPointSourceData src : srcList) {
+			LocationList border = new LocationList();
+			Location srcLoc = src.getHypoMagFreqDistAtLoc().getLocation();
+			border.add(new Location(srcLoc.getLatitude() + gridRes / 2, srcLoc
+					.getLongitude() - gridRes / 2));
+			border.add(new Location(srcLoc.getLatitude() + gridRes / 2, srcLoc
+					.getLongitude() + gridRes / 2));
+			border.add(new Location(srcLoc.getLatitude() - gridRes / 2, srcLoc
+					.getLongitude() + gridRes / 2));
+			border.add(new Location(srcLoc.getLatitude() - gridRes / 2, srcLoc
+					.getLongitude() - gridRes / 2));
+			Region reg = new Region(border, null);
+			GEMAreaSourceData area = new GEMAreaSourceData(src.getID(),
+					src.getName(), src.getTectReg(), reg,
+					new MagFreqDistsForFocalMechs(src.getHypoMagFreqDistAtLoc()
+							.getFirstMagFreqDist(), src
+							.getHypoMagFreqDistAtLoc().getFirstFocalMech()),
+					src.getAveRupTopVsMag(), src.getAveHypoDepth());
+			IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+					.getFirstMagFreqDist();
+			fileW.write("> ");
+			double[] color = getColor(mfd.getTotalIncrRate() / area.getArea(),
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+				Location loc = area.getRegion().getBorder().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+					+ " " + area.getRegion().getBorder().get(0).getLatitude()
+					+ "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault surfaces
+			file = new File("areaRegions.dat");
+			fileW = new FileWriter(file);
+			for (GEMPointSourceData src : srcList) {
+				LocationList border = new LocationList();
+				Location srcLoc = src.getHypoMagFreqDistAtLoc().getLocation();
+				border.add(new Location(srcLoc.getLatitude() + gridRes / 2,
+						srcLoc.getLongitude() - gridRes / 2));
+				border.add(new Location(srcLoc.getLatitude() + gridRes / 2,
+						srcLoc.getLongitude() + gridRes / 2));
+				border.add(new Location(srcLoc.getLatitude() - gridRes / 2,
+						srcLoc.getLongitude() + gridRes / 2));
+				border.add(new Location(srcLoc.getLatitude() - gridRes / 2,
+						srcLoc.getLongitude() - gridRes / 2));
+				Region reg = new Region(border, null);
+				GEMAreaSourceData area = new GEMAreaSourceData(
+						src.getID(),
+						src.getName(),
+						src.getTectReg(),
+						reg,
+						new MagFreqDistsForFocalMechs(src
+								.getHypoMagFreqDistAtLoc()
+								.getFirstMagFreqDist(), src
+								.getHypoMagFreqDistAtLoc().getFirstFocalMech()),
+						src.getAveRupTopVsMag(), src.getAveHypoDepth());
+				IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+						.getFirstMagFreqDist();
+				fileW.write("> ");
+				double[] color = getColor(mfd.getMinX(), minMinMag, maxMinMag,
+						cptMinMagTable);
+				fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+					Location loc = area.getRegion().getBorder().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+						+ " "
+						+ area.getRegion().getBorder().get(0).getLatitude()
+						+ "\n");
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -Wthin -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		String param = "";
+		double discretization = 0.2;
+		command = gmtDir + "psscale -D8.0/-1.0/20c/0.4ch -N1 -O -K -B"
+				+ discretization + "::/:" + param + ": -CAreaMaxMag.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			discretization = 0.2;
+			command = gmtDir + "psscale -D8.0/-1.0/20c/0.4ch -N1 -O -K -B"
+					+ discretization + "::/:" + param + ": -CAreaMinMag.cpt";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %2.1e";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		param = "";
+		command = gmtDir + "psscale -D8.0/-1.0/20c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CAreaMomentRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		param = "";
+		command = gmtDir + "psscale -D8.0/-1.0/20c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CAreaOccurrenceRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+
+		momentRateFile.close();
+		geometryFile.close();
+		maxMagFile.close();
+		occurrenceRateFile.close();
+		minMagFile.close();
+
+	}
+
+	public static void plotAreaSources(ArrayList<GEMAreaSourceData> srcList)
+			throws IOException, InterruptedException {
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		double minTotMomentRate = Double.MAX_VALUE;
+		double maxTotMomentRate = -Double.MAX_VALUE;
+		double minMaxMag = Double.MAX_VALUE;
+		double maxMaxMag = -Double.MAX_VALUE;
+		double minOccurrenceRate = Double.MAX_VALUE;
+		double maxOccurrenceRate = -Double.MAX_VALUE;
+		double minMinMag = Double.MAX_VALUE;
+		double maxMinMag = -Double.MAX_VALUE;
+		for (GEMAreaSourceData src : srcList) {
+			LocationList border = src.getRegion().getBorder();
+			for (Location loc : border) {
+				if (loc.getLongitude() < minLon)
+					minLon = loc.getLongitude();
+				if (loc.getLatitude() < minLat)
+					minLat = loc.getLatitude();
+				if (loc.getLongitude() > maxLon)
+					maxLon = loc.getLongitude();
+				if (loc.getLatitude() > maxLat)
+					maxLat = loc.getLatitude();
+			}
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist()
+					.getTotalMomentRate()
+					/ src.getArea() < minTotMomentRate)
+				minTotMomentRate = src.getMagfreqDistFocMech()
+						.getFirstMagFreqDist().getTotalMomentRate()
+						/ src.getArea();
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist()
+					.getTotalMomentRate()
+					/ src.getArea() > maxTotMomentRate)
+				maxTotMomentRate = src.getMagfreqDistFocMech()
+						.getFirstMagFreqDist().getTotalMomentRate()
+						/ src.getArea();
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist().getMaxX() < minMaxMag)
+				minMaxMag = src.getMagfreqDistFocMech().getFirstMagFreqDist()
+						.getMaxX();
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist().getMaxX() > maxMaxMag)
+				maxMaxMag = src.getMagfreqDistFocMech().getFirstMagFreqDist()
+						.getMaxX();
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist().getMinX() < minMinMag)
+				minMinMag = src.getMagfreqDistFocMech().getFirstMagFreqDist()
+						.getMinX();
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist().getMinX() > maxMinMag)
+				maxMinMag = src.getMagfreqDistFocMech().getFirstMagFreqDist()
+						.getMinX();
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist()
+					.getTotalIncrRate()
+					/ src.getArea() < minOccurrenceRate)
+				minOccurrenceRate = src.getMagfreqDistFocMech()
+						.getFirstMagFreqDist().getTotalIncrRate()
+						/ src.getArea();
+			if (src.getMagfreqDistFocMech().getFirstMagFreqDist()
+					.getTotalIncrRate()
+					/ src.getArea() > maxOccurrenceRate)
+				maxOccurrenceRate = src.getMagfreqDistFocMech()
+						.getFirstMagFreqDist().getTotalIncrRate()
+						/ src.getArea();
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 3.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotS,
+								// FaultExceptionizeY;
+		String portrait = "";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		FileWriter momentRateFile = new FileWriter(new File(
+				"areaTotMomentRate.ps"));
+		FileWriter geometryFile = new FileWriter(new File("areaGeometry.ps"));
+		FileWriter maxMagFile = new FileWriter(new File("areaMaxMagnitude.ps"));
+		FileWriter occurrenceRateFile = new FileWriter(new File(
+				"areaOccurrenceRate.ps"));
+		FileWriter minMagFile = new FileWriter(new File("areaMinMagnitude.ps"));
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt for total moment rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minTotMomentRate
+				+ "/" + maxTotMomentRate + "/2";// +cptDiscretization+"";
+		FileWriter cptFaultFile = new FileWriter(new File("AreaMomentRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptTabel = readCptFile("AreaMomentRate.cpt");
+
+		// make cpt for maximum magnitude
+		command = gmtDir + "makecpt -Cseis -I -N -T" + minMaxMag + "/"
+				+ maxMaxMag + "/0.1";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("AreaMaxMag.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptMaxMagTable = readCptFile("AreaMaxMag.cpt");
+
+		// make cpt for occurrence rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minOccurrenceRate
+				+ "/" + maxOccurrenceRate + "/2";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("AreaOccurrenceRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptOccurrenceRateTable = readCptFile("AreaOccurrenceRate.cpt");
+
+		// make cpt for minimum magnitude
+		ArrayList<double[][]> cptMinMagTable = null;
+		if (minMinMag != maxMinMag) {
+			command = gmtDir + "makecpt -Cseis -I -N -T" + minMinMag + "/"
+					+ maxMinMag + "/0.1";// +cptDiscretization+"";
+			cptFaultFile = new FileWriter(new File("AreaMinMag.cpt"));
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(cptFaultFile, p);
+			cptFaultFile.close();
+			p.waitFor();
+			// read cpt file
+			cptMinMagTable = readCptFile("AreaMinMag.cpt");
+		}
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			command = gmtDir
+					+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+					+ region + " " + "-J" + projection + size + "i ";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot fault surfaces
+		File file = new File("areaRegions.dat");
+		FileWriter fileW = new FileWriter(file);
+		for (GEMAreaSourceData area : srcList) {
+			IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+					.getFirstMagFreqDist();
+			fileW.write("> ");
+			double[] color = getColor(
+					mfd.getTotalMomentRate() / area.getArea(),
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+				Location loc = area.getRegion().getBorder().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+					+ " " + area.getRegion().getBorder().get(0).getLatitude()
+					+ "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -A -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		file = new File("areaRegions.dat");
+		fileW = new FileWriter(file);
+		for (GEMAreaSourceData area : srcList) {
+			IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+					.getFirstMagFreqDist();
+			fileW.write(">\n");
+			for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+				Location loc = area.getRegion().getBorder().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+					+ " " + area.getRegion().getBorder().get(0).getLatitude()
+					+ "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -A -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		file = new File("areaRegions.dat");
+		fileW = new FileWriter(file);
+		for (GEMAreaSourceData area : srcList) {
+			IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+					.getFirstMagFreqDist();
+			fileW.write("> ");
+			double[] color = getColor(mfd.getMaxX(), minMaxMag, maxMaxMag,
+					cptMaxMagTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+				Location loc = area.getRegion().getBorder().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+					+ " " + area.getRegion().getBorder().get(0).getLatitude()
+					+ "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -A -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault surfaces
+		file = new File("areaRegions.dat");
+		fileW = new FileWriter(file);
+		for (GEMAreaSourceData area : srcList) {
+			IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+					.getFirstMagFreqDist();
+			fileW.write("> ");
+			double[] color = getColor(mfd.getTotalIncrRate() / area.getArea(),
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+				Location loc = area.getRegion().getBorder().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+					+ " " + area.getRegion().getBorder().get(0).getLatitude()
+					+ "\n");
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -A -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault surfaces
+			file = new File("areaRegions.dat");
+			fileW = new FileWriter(file);
+			for (GEMAreaSourceData area : srcList) {
+				IncrementalMagFreqDist mfd = area.getMagfreqDistFocMech()
+						.getFirstMagFreqDist();
+				fileW.write("> ");
+				double[] color = getColor(mfd.getMinX(), minMinMag, maxMinMag,
+						cptMinMagTable);
+				fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < area.getRegion().getBorder().size(); i++) {
+					Location loc = area.getRegion().getBorder().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write(area.getRegion().getBorder().get(0).getLongitude()
+						+ " "
+						+ area.getRegion().getBorder().get(0).getLatitude()
+						+ "\n");
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -Wthin -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		String param = "";
+		double discretization = 0.2;
+		command = gmtDir + "psscale -D8.0/-1.0/18c/0.4ch -N1 -O -K -B"
+				+ discretization + ":Maximum_Magnitude_(Mw):/:" + param
+				+ ": -CAreaMaxMag.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			discretization = 0.2;
+			command = gmtDir + "psscale -D8.0/-1.0/18c/0.4ch -N1 -O -K -B"
+					+ discretization + ":Minimum_Magnitude_(Mw):/:" + param
+					+ ": -CAreaMinMag.cpt";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %2.1e";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		param = "";
+		command = gmtDir
+				+ "psscale -D8.0/-1.0/18c/0.4ch -N1 -L -O -K -B:(Nm/year/km2):/:"
+				+ param + ": -CAreaMomentRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		param = "";
+		command = gmtDir + "psscale -D8.0/-1.0/18c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CAreaOccurrenceRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+
+		momentRateFile.close();
+		geometryFile.close();
+		maxMagFile.close();
+		occurrenceRateFile.close();
+		minMagFile.close();
+
+	}
+
+	public static void plotSubFaultSources(
+			ArrayList<GEMSubductionFaultSourceData> faultSourceDataList)
+			throws IOException, InterruptedException {
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		double minTotMomentRate = Double.MAX_VALUE;
+		double maxTotMomentRate = -Double.MAX_VALUE;
+		double minMaxMag = Double.MAX_VALUE;
+		double maxMaxMag = -Double.MAX_VALUE;
+		double minOccurrenceRate = Double.MAX_VALUE;
+		double maxOccurrenceRate = -Double.MAX_VALUE;
+		double minMinMag = Double.MAX_VALUE;
+		double maxMinMag = -Double.MAX_VALUE;
+		for (GEMSubductionFaultSourceData faultSrcData : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					faultSrcData.getTopTrace(), faultSrcData.getBottomTrace(),
+					1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = faultSrcData.getTopTrace();
+			for (Location loc : trace) {
+				if (loc.getLongitude() < minLon)
+					minLon = loc.getLongitude();
+				if (loc.getLatitude() < minLat)
+					minLat = loc.getLatitude();
+				if (loc.getLongitude() > maxLon)
+					maxLon = loc.getLongitude();
+				if (loc.getLatitude() > maxLat)
+					maxLat = loc.getLatitude();
+			}
+			if (faultSrcData.getMfd().getTotalMomentRate() / area < minTotMomentRate)
+				minTotMomentRate = faultSrcData.getMfd().getTotalMomentRate()
+						/ area;
+			if (faultSrcData.getMfd().getTotalMomentRate() / area > maxTotMomentRate)
+				maxTotMomentRate = faultSrcData.getMfd().getTotalMomentRate()
+						/ area;
+			if (faultSrcData.getMfd().getMaxX() < minMaxMag)
+				minMaxMag = faultSrcData.getMfd().getMaxX();
+			if (faultSrcData.getMfd().getMaxX() > maxMaxMag)
+				maxMaxMag = faultSrcData.getMfd().getMaxX();
+			if (faultSrcData.getMfd().getMinX() < minMinMag)
+				minMinMag = faultSrcData.getMfd().getMinX();
+			if (faultSrcData.getMfd().getMinX() > maxMinMag)
+				maxMinMag = faultSrcData.getMfd().getMinX();
+			if (faultSrcData.getMfd().getTotalIncrRate() / area < minOccurrenceRate)
+				minOccurrenceRate = faultSrcData.getMfd().getTotalIncrRate()
+						/ area;
+			if (faultSrcData.getMfd().getTotalIncrRate() / area > maxOccurrenceRate)
+				maxOccurrenceRate = faultSrcData.getMfd().getTotalIncrRate()
+						/ area;
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 3.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "-P";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		FileWriter momentRateFile = new FileWriter(new File(
+				"faultTotMomentRate.ps"));
+		FileWriter geometryFile = new FileWriter(new File("faultGeometry.ps"));
+		FileWriter maxMagFile = new FileWriter(new File("faultMaxMagnitude.ps"));
+		FileWriter occurrenceRateFile = new FileWriter(new File(
+				"faultOccurrenceRate.ps"));
+		FileWriter minMagFile = new FileWriter(new File("faultMinMagnitude.ps"));
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt for total moment rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minTotMomentRate
+				+ "/" + maxTotMomentRate + "/2";// +cptDiscretization+"";
+		FileWriter cptFaultFile = new FileWriter(
+				new File("FaultMomentRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptTabel = readCptFile("FaultMomentRate.cpt");
+
+		// make cpt for maximum magnitude
+		command = gmtDir + "makecpt -Cseis -I -N -T" + minMaxMag + "/"
+				+ maxMaxMag + "/0.1";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("FaultMaxMag.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptMaxMagTable = readCptFile("FaultMaxMag.cpt");
+
+		// make cpt for occurrence rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minOccurrenceRate
+				+ "/" + maxOccurrenceRate + "/1";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("FaultOccurrenceRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptOccurrenceRateTable = readCptFile("FaultOccurrenceRate.cpt");
+
+		// make cpt for minimum magnitude
+		ArrayList<double[][]> cptMinMagTable = null;
+		if (minMinMag != maxMinMag) {
+			command = gmtDir + "makecpt -Cseis -I -N -T" + minMinMag + "/"
+					+ maxMinMag + "/0.1";// +cptDiscretization+"";
+			cptFaultFile = new FileWriter(new File("FaultMinMag.cpt"));
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(cptFaultFile, p);
+			cptFaultFile.close();
+			p.waitFor();
+			// read cpt file
+			cptMinMagTable = readCptFile("FaultMinMag.cpt");
+		}
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// // set params
+		// command = gmtDir+"gmtset PAPER_MEDIA = a3"+
+		// region;
+		// p = Runtime.getRuntime().exec(command);
+		// p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// make relief color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Crelief -Z";
+		p = Runtime.getRuntime().exec(command);
+		cptFile = new FileWriter(new File("RegionRelief.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			command = gmtDir
+					+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+					+ region + " " + "-J" + projection + size + "i ";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot fault surfaces
+		File file = new File("faultSurfaces.dat");
+		FileWriter fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalMomentRate() / area,
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			fileW.write(">\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getMaxX(), minMaxMag,
+					maxMaxMag, cptMaxMagTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault surfaces
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault surfaces
+			file = new File("faultSurfaces.dat");
+			fileW = new FileWriter(file);
+			for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+				ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+						rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+				fileW.write("> ");
+				double[] color = getColor(rup.getMfd().getMinX(), minMinMag,
+						maxMinMag, cptMinMagTable);
+				fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+						.size(); i++) {
+					Location loc = faultSurface.getSurfacePerimeterLocsList()
+							.get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -Wthin -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			// fileW.write("> -Wfat\n");
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalMomentRate() / area,
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			fileW.write("> -Wthickest,red\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			// fileW.write("> -Wfat\n");
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getMaxX(), minMaxMag,
+					maxMaxMag, cptMaxMagTable);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			// fileW.write("> -Wfat\n");
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault traces
+			file = new File("faultTraces.dat");
+			fileW = new FileWriter(file);
+			for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+				// fileW.write("> -Wfat\n");
+				fileW.write("> ");
+				double[] color = getColor(rup.getMfd().getMinX(), minMinMag,
+						maxMinMag, cptMinMagTable);
+				fileW.write("-Wfat," + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < rup.getTopTrace().size(); i++) {
+					Location loc = rup.getTopTrace().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		String param = "";
+		command = gmtDir + "psscale -D4.0/-1.0/10c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CFaultMomentRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		param = "";
+		double discretization = 0.2;
+		command = gmtDir + "psscale -D4.0/-1.0/10c/0.4ch -N1 -O -K -B"
+				+ discretization + "::/:" + param + ": -CFaultMaxMag.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+
+		if (cptMinMagTable != null) {
+			discretization = 0.2;
+			command = gmtDir + "psscale -D4.0/-1.0/10c/0.4ch -N1 -O -K -B"
+					+ discretization + "::/:" + param + ": -CFaultMinMag.cpt";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %2.1e";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		param = "";
+		command = gmtDir + "psscale -D4.0/-1.0/10c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CFaultOccurrenceRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+
+		momentRateFile.close();
+		geometryFile.close();
+		maxMagFile.close();
+		occurrenceRateFile.close();
+		minMagFile.close();
+	}
+
+	public static void plotFaultSources(
+			ArrayList<GEMFaultSourceData> faultSourceDataList)
+			throws IOException, InterruptedException {
+
+		double minAvalue = Double.MAX_VALUE;
+		double maxAvalue = -Double.MAX_VALUE;
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		double minTotMomentRate = Double.MAX_VALUE;
+		double maxTotMomentRate = -Double.MAX_VALUE;
+		double minMaxMag = Double.MAX_VALUE;
+		double maxMaxMag = -Double.MAX_VALUE;
+		double minOccurrenceRate = Double.MAX_VALUE;
+		double maxOccurrenceRate = -Double.MAX_VALUE;
+		double minMinMag = Double.MAX_VALUE;
+		double maxMinMag = -Double.MAX_VALUE;
+		for (GEMFaultSourceData faultSrcData : faultSourceDataList) {
+			GutenbergRichterMagFreqDist dist = (GutenbergRichterMagFreqDist) faultSrcData
+					.getMfd();
+			double bValue = dist.get_bValue();
+			double minMagnitude = dist.getMinX() - (dist.getDelta() / 2);
+			double maxMagnitude = dist.getMaxX() + (dist.getDelta() / 2);
+			double totalCumRate = dist.getTotalIncrRate();
+
+			double den = Math.pow(10, -(bValue * minMagnitude))
+					- Math.pow(10, -(bValue * maxMagnitude));
+
+			double aVal = Math.log10(totalCumRate / den);
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					faultSrcData.getTrace(), faultSrcData.getDip(),
+					faultSrcData.getSeismDepthUpp(),
+					faultSrcData.getSeismDepthLow(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = faultSrcData.getTrace();
+			for (Location loc : trace) {
+				if (loc.getLongitude() < minLon)
+					minLon = loc.getLongitude();
+				if (loc.getLatitude() < minLat)
+					minLat = loc.getLatitude();
+				if (loc.getLongitude() > maxLon)
+					maxLon = loc.getLongitude();
+				if (loc.getLatitude() > maxLat)
+					maxLat = loc.getLatitude();
+			}
+			if (faultSrcData.getMfd().getTotalMomentRate() / area < minTotMomentRate)
+				minTotMomentRate = faultSrcData.getMfd().getTotalMomentRate()
+						/ area;
+			if (faultSrcData.getMfd().getTotalMomentRate() / area > maxTotMomentRate)
+				maxTotMomentRate = faultSrcData.getMfd().getTotalMomentRate()
+						/ area;
+			if (faultSrcData.getMfd().getMaxX() < minMaxMag)
+				minMaxMag = faultSrcData.getMfd().getMaxX();
+			if (faultSrcData.getMfd().getMaxX() > maxMaxMag)
+				maxMaxMag = faultSrcData.getMfd().getMaxX();
+			if (faultSrcData.getMfd().getMinX() < minMinMag)
+				minMinMag = faultSrcData.getMfd().getMinX();
+			if (faultSrcData.getMfd().getMinX() > maxMinMag)
+				maxMinMag = faultSrcData.getMfd().getMinX();
+			if (faultSrcData.getMfd().getTotalIncrRate() / area < minOccurrenceRate)
+				minOccurrenceRate = faultSrcData.getMfd().getTotalIncrRate()
+						/ area;
+			if (faultSrcData.getMfd().getTotalIncrRate() / area > maxOccurrenceRate)
+				maxOccurrenceRate = faultSrcData.getMfd().getTotalIncrRate()
+						/ area;
+			if (aVal < minAvalue)
+				minAvalue = aVal;
+			if (aVal > maxAvalue)
+				maxAvalue = aVal;
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 2;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		System.out.println("min a value: " + minAvalue);
+		System.out.println("max a value: " + maxAvalue);
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 3.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "-P";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		FileWriter momentRateFile = new FileWriter(new File(
+				"faultTotMomentRate.ps"));
+		FileWriter geometryFile = new FileWriter(new File("faultGeometry.ps"));
+		FileWriter maxMagFile = new FileWriter(new File("faultMaxMagnitude.ps"));
+		FileWriter occurrenceRateFile = new FileWriter(new File(
+				"faultOccurrenceRate.ps"));
+		FileWriter minMagFile = new FileWriter(new File("faultMinMagnitude.ps"));
+		FileWriter aValueFile = new FileWriter(new File("faultAValue.ps"));
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt for a value
+		command = gmtDir + "makecpt -Cseis -I -N -T" + minAvalue + "/"
+				+ maxAvalue + "/0.1";// +cptDiscretization+"";
+		FileWriter cptFaultFile = new FileWriter(new File("FaultAvalue.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptAvalueTable = readCptFile("FaultAvalue.cpt");
+
+		// make cpt for total moment rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minTotMomentRate
+				+ "/" + maxTotMomentRate + "/2";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("FaultMomentRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptTabel = readCptFile("FaultMomentRate.cpt");
+
+		// make cpt for maximum magnitude
+		command = gmtDir + "makecpt -Cseis -I -N -T" + minMaxMag + "/"
+				+ maxMaxMag + "/0.1";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("FaultMaxMag.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptMaxMagTable = readCptFile("FaultMaxMag.cpt");
+
+		// make cpt for occurrence rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minOccurrenceRate
+				+ "/" + maxOccurrenceRate + "/3";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("FaultOccurrenceRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptOccurrenceRateTable = readCptFile("FaultOccurrenceRate.cpt");
+
+		// make cpt for minimum magnitude
+		ArrayList<double[][]> cptMinMagTable = null;
+		if (minMinMag != maxMinMag) {
+			command = gmtDir + "makecpt -Cseis -I -N -T" + minMinMag + "/"
+					+ maxMinMag + "/0.1";// +cptDiscretization+"";
+			cptFaultFile = new FileWriter(new File("FaultMinMag.cpt"));
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(cptFaultFile, p);
+			cptFaultFile.close();
+			p.waitFor();
+			// read cpt file
+			cptMinMagTable = readCptFile("FaultMinMag.cpt");
+		}
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// // set params
+		// command = gmtDir+"gmtset PAPER_MEDIA = a3"+
+		// region;
+		// p = Runtime.getRuntime().exec(command);
+		// p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// make relief color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Crelief -Z";
+		p = Runtime.getRuntime().exec(command);
+		cptFile = new FileWriter(new File("RegionRelief.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(aValueFile, p);
+		p.waitFor();
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			command = gmtDir
+					+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+					+ region + " " + "-J" + projection + size + "i ";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(aValueFile, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(aValueFile, p);
+		p.waitFor();
+
+		// plot fault surfaces
+		File file = new File("faultSurfaces.dat");
+		FileWriter fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			// skip if line faults
+			if (rup.getSeismDepthUpp() == rup.getSeismDepthLow())
+				continue;
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalMomentRate() / area,
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			// skip if line faults
+			if (rup.getSeismDepthUpp() == rup.getSeismDepthLow())
+				continue;
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			fileW.write(">\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			// skip if line faults
+			if (rup.getSeismDepthUpp() == rup.getSeismDepthLow())
+				continue;
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getMaxX(), minMaxMag,
+					maxMaxMag, cptMaxMagTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault surfaces
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			// skip if line faults
+			if (rup.getSeismDepthUpp() == rup.getSeismDepthLow())
+				continue;
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault surfaces
+			file = new File("faultSurfaces.dat");
+			fileW = new FileWriter(file);
+			for (GEMFaultSourceData rup : faultSourceDataList) {
+				// skip if line faults
+				if (rup.getSeismDepthUpp() == rup.getSeismDepthLow())
+					continue;
+				StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+						rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+						rup.getSeismDepthLow(), 1.0);
+				fileW.write("> ");
+				double[] color = getColor(rup.getMfd().getMinX(), minMinMag,
+						maxMinMag, cptMinMagTable);
+				fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+						.size(); i++) {
+					Location loc = faultSurface.getSurfacePerimeterLocsList()
+							.get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -Wthin -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+		// plot fault surfaces
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			// skip if line faults
+			if (rup.getSeismDepthUpp() == rup.getSeismDepthLow())
+				continue;
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptAvalueTable != null) {
+			// plot fault surfaces
+			file = new File("faultSurfaces.dat");
+			fileW = new FileWriter(file);
+			for (GEMFaultSourceData rup : faultSourceDataList) {
+				// skip if line faults
+				if (rup.getSeismDepthUpp() == rup.getSeismDepthLow())
+					continue;
+				StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+						rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+						rup.getSeismDepthLow(), 1.0);
+				fileW.write("> ");
+				GutenbergRichterMagFreqDist dist = (GutenbergRichterMagFreqDist) rup
+						.getMfd();
+				double bValue = dist.get_bValue();
+				double minMagnitude = dist.getMinX() - (dist.getDelta() / 2);
+				double maxMagnitude = dist.getMaxX() + (dist.getDelta() / 2);
+				double totalCumRate = dist.getTotalIncrRate();
+
+				double den = Math.pow(10, -(bValue * minMagnitude))
+						- Math.pow(10, -(bValue * maxMagnitude));
+
+				double aVal = Math.log10(totalCumRate / den);
+				double[] color = getColor(aVal, minAvalue, maxAvalue,
+						cptAvalueTable);
+				fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+						.size(); i++) {
+					Location loc = faultSurface.getSurfacePerimeterLocsList()
+							.get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -Wthin -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(aValueFile, p);
+			p.waitFor();
+		}
+
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			// fileW.write("> -Wfat\n");
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalMomentRate() / area,
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTrace().size(); i++) {
+				Location loc = rup.getTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			fileW.write("> -Wthickest,red\n");
+			for (int i = 0; i < rup.getTrace().size(); i++) {
+				Location loc = rup.getTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			// fileW.write("> -Wfat\n");
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getMaxX(), minMaxMag,
+					maxMaxMag, cptMaxMagTable);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTrace().size(); i++) {
+				Location loc = rup.getTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			// fileW.write("> -Wfat\n");
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTrace().size(); i++) {
+				Location loc = rup.getTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault traces
+			file = new File("faultTraces.dat");
+			fileW = new FileWriter(file);
+			for (GEMFaultSourceData rup : faultSourceDataList) {
+				// fileW.write("> -Wfat\n");
+				fileW.write("> ");
+				double[] color = getColor(rup.getMfd().getMinX(), minMinMag,
+						maxMinMag, cptMinMagTable);
+				fileW.write("-Wfat," + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < rup.getTrace().size(); i++) {
+					Location loc = rup.getTrace().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMFaultSourceData rup : faultSourceDataList) {
+			StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+					rup.getTrace(), rup.getDip(), rup.getSeismDepthUpp(),
+					rup.getSeismDepthLow(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			// fileW.write("> -Wfat\n");
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTrace().size(); i++) {
+				Location loc = rup.getTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptAvalueTable != null) {
+			// plot fault traces
+			file = new File("faultTraces.dat");
+			fileW = new FileWriter(file);
+			for (GEMFaultSourceData rup : faultSourceDataList) {
+				// fileW.write("> -Wfat\n");
+				fileW.write("> ");
+				GutenbergRichterMagFreqDist dist = (GutenbergRichterMagFreqDist) rup
+						.getMfd();
+				double bValue = dist.get_bValue();
+				double minMagnitude = dist.getMinX() - (dist.getDelta() / 2);
+				double maxMagnitude = dist.getMaxX() + (dist.getDelta() / 2);
+				double totalCumRate = dist.getTotalIncrRate();
+
+				double den = Math.pow(10, -(bValue * minMagnitude))
+						- Math.pow(10, -(bValue * maxMagnitude));
+
+				double aVal = Math.log10(totalCumRate / den);
+				double[] color = getColor(aVal, minAvalue, maxAvalue,
+						cptAvalueTable);
+				fileW.write("-Wfat," + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < rup.getTrace().size(); i++) {
+					Location loc = rup.getTrace().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(aValueFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		String param = "";
+		command = gmtDir
+				+ "psscale -D7.5/-1.0/15c/0.4ch -N1 -L -O -K -B:(Nm/year/km2):/:"
+				+ param + ": -CFaultMomentRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		param = "";
+		double discretization = 0.2;
+		command = gmtDir + "psscale -D7.5/-1.0/15c/0.4ch -N1 -O -K -B"
+				+ discretization + ":" + "Maximum_Magnitude_(Mw)" + ":/:"
+				+ param + ": -CFaultMaxMag.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			discretization = 0.2;
+			command = gmtDir + "psscale -D7.5/-1.0/15c/0.4ch -N1 -O -K -B"
+					+ discretization + ":Minimum_Magnitude_(Mw):/:" + param
+					+ ": -CFaultMinMag.cpt";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+		command = gmtDir + "psscale -D7.5/-1.0/15c/0.4ch -N1 -O -K -B"
+				+ discretization + ":" + "Gutenberg_Richter_a_Value" + ":/:"
+				+ param + ": -CFaultAValue.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(aValueFile, p);
+		p.waitFor();
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %2.1e";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		param = "";
+		command = gmtDir + "psscale -D7.5/-1.0/15c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CFaultOccurrenceRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+
+		momentRateFile.close();
+		geometryFile.close();
+		maxMagFile.close();
+		occurrenceRateFile.close();
+		minMagFile.close();
+		aValueFile.close();
+	}
+
+	public static void plotFaultSourceERF3D(GEMFaultSourceData faultSrc)
+			throws IOException, InterruptedException {
+
+		// create ERF
+		ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
+		srcList.add(faultSrc);
+		GEM1ERF erf = new GEM1ERF(srcList);
+		TimeSpan tms = new TimeSpan(TimeSpan.NONE, TimeSpan.YEARS);
+		tms.setDuration(50.0);
+		erf.setTimeSpan(tms);
+		erf.setParameter(GEM1ERF.FAULT_DISCR_PARAM_NAME, 1.0);
+		erf.setParameter(GEM1ERF.FAULT_RUP_OFFSET_PARAM_NAME, 20.0);
+		erf.setParameter(GEM1ERF.FAULT_FLOATER_TYPE_PARAM_NAME,
+				GEM1ERF.FLOATER_TYPE_ALONG_STRIKE_AND_DOWNDIP);
+		erf.setParameter(GEM1ERF.FAULT_MAG_SCALING_REL_PARAM_NAME,
+				new WC1994_MagAreaRelationship().NAME);
+		erf.setParameter(GEM1ERF.FAULT_SCALING_SIGMA_PARAM_NAME, 0.0);
+		erf.setParameter(GEM1ERF.FAULT_RUP_ASPECT_RATIO_PARAM_NAME, 2.0);
+		erf.updateForecast();
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		FaultTrace trace = faultSrc.getTrace();
+		for (Location loc : trace) {
+			if (loc.getLongitude() < minLon)
+				minLon = loc.getLongitude();
+			if (loc.getLatitude() < minLat)
+				minLat = loc.getLatitude();
+			if (loc.getLongitude() > maxLon)
+				maxLon = loc.getLongitude();
+			if (loc.getLatitude() > maxLat)
+				maxLat = loc.getLatitude();
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		FileWriter faultSrcPlot = new FileWriter(new File("faultSrc3D.ps"));
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+
+		String projection = "m";
+		// cm per degree
+		double scale = 1.5;
+
+		double aveLat = (minLat + maxLat) / 2;
+		double aveLon = (minLon + maxLon) / 2;
+		Location aveLoc = new Location(aveLat, aveLon);
+		double degreeInKm = LocationUtils.horzDistance(aveLoc, new Location(
+				aveLat, aveLon + 1));
+		System.out.println("average lat: " + aveLat + ", 1 degree in km: "
+				+ degreeInKm);
+
+		// km per cm
+		double scaleZ = scale / degreeInKm;
+		String projection2 = "z" + Double.toString(scaleZ) + "c";
+		String viewPoint = "45/20";
+
+		String portrait = "-P";
+		double annotationLon = 1;
+		double annotationLat = 1;
+		String title = "";
+
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// make relief color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Crelief -Z";
+		p = Runtime.getRuntime().exec(command);
+		cptFile = new FileWriter(new File("RegionRelief.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ scale + "c " + "-J" + projection2 + " " + "-E" + viewPoint
+				+ " " + "-B" + annotationLon + "/" + annotationLat + " "
+				+ "-B:." + title + ":" + " " + portrait + " " + "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// add topography + illumination
+		command = gmtDir + "grdview RegionHighRes.grd " + "-J" + projection
+				+ scale + " " + " -Qi -CRegionGray.cpt " + "-E" + viewPoint
+				+ " -IRegion_gradient.grd -K -O";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ scale + "c " + "-J" + projection2 + " " + "-E" + viewPoint
+				+ " " + "-B" + annotationLon + "/" + annotationLat + " "
+				+ "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+
+		// plot fault surface
+		File file = new File("faultSurfaces.dat");
+		FileWriter fileW = new FileWriter(file);
+		StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+				faultSrc.getTrace(), faultSrc.getDip(),
+				faultSrc.getSeismDepthUpp(), faultSrc.getSeismDepthLow(), 1.0);
+		double area = Double.NaN;
+		if (faultSurface.getSurfaceWidth() > 0)
+			area = faultSurface.getSurfaceArea();
+		else
+			area = faultSurface.getSurfaceLength();
+		fileW.write(">\n");
+		for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList().size(); i++) {
+			Location loc = faultSurface.getSurfacePerimeterLocsList().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + " "
+					+ -loc.getDepth() + "\n");
+		}
+		fileW.write("\n");
+
+		fileW.close();
+		command = gmtDir + "psxyz " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + scale + "c " + "-J" + projection2
+				+ " " + "-E" + viewPoint + " " + "-B" + annotationLon + "/"
+				+ annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// plot rupture surfaces
+		for (ProbEqkRupture probRup : (ArrayList<ProbEqkRupture>) erf
+				.getSource(0).getRuptureList()) {
+			if (probRup.getMag() == faultSrc.getMfd().getMaxX()) {
+				file = new File("ruptureSurface.dat");
+				fileW = new FileWriter(file);
+				fileW.write("> -Gp3000/74:B-Fgreen\n");
+				for (int i = 0; i < probRup.getRuptureSurface()
+						.getSurfacePerimeterLocsList().size(); i++) {
+					Location loc = probRup.getRuptureSurface()
+							.getSurfacePerimeterLocsList().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ " " + -loc.getDepth() + "\n");
+				}
+				fileW.write("\n");
+				fileW.close();
+				command = gmtDir + "psxyz " + file.getAbsolutePath() + " "
+						+ region + " " + "-J" + projection + scale + "c "
+						+ "-J" + projection2 + " " + "-E" + viewPoint + " "
+						+ "-B" + annotationLon + "/" + annotationLat + " "
+						+ "-B:." + title + ":" + " " + "-M -N -Wthick -P -O -K";
+				p = Runtime.getRuntime().exec(command);
+				saveOutput(faultSrcPlot, p);
+				p.waitFor();
+			}
+		}
+
+		// plot fault trace
+		file = new File("faultTrace.dat");
+		fileW = new FileWriter(file);
+		fileW.write("> -Wthick,red\n");
+		for (int i = 0; i < faultSrc.getTrace().size(); i++) {
+			Location loc = faultSrc.getTrace().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + " "
+					+ -loc.getDepth() + "\n");
+		}
+		fileW.write("\n");
+
+		fileW.close();
+		command = gmtDir + "psxyz " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + scale + "c " + "-J" + projection2
+				+ " " + "-E" + viewPoint + " " + "-B" + annotationLon + "/"
+				+ annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		faultSrcPlot.close();
+	}
+
+	public static void plotRupAndGMF3D(EqkRupture rup, Map<Site, Double> map,
+			double gridSampling, String fileName) throws Exception {
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		for (Site site : map.keySet()) {
+			Location loc = site.getLocation();
+			if (loc.getLongitude() < minLon)
+				minLon = loc.getLongitude();
+			if (loc.getLatitude() < minLat)
+				minLat = loc.getLatitude();
+			if (loc.getLongitude() > maxLon)
+				maxLon = loc.getLongitude();
+			if (loc.getLatitude() > maxLat)
+				maxLat = loc.getLatitude();
+		}
+		// minLon = minLon - 1;
+		// maxLon = maxLon + 1;
+		// minLat = minLat - 1;
+		// maxLat = maxLat + 1;
+
+		double maxValue = maxValue(map);
+		double minValue = minValue(map);
+
+		FileWriter faultSrcPlot = new FileWriter(new File(fileName));
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+
+		String projection = "m";
+		// cm per degree
+		double scale = 3.5;
+
+		double aveLat = (minLat + maxLat) / 2;
+		double aveLon = (minLon + maxLon) / 2;
+		Location aveLoc = new Location(aveLat, aveLon);
+		double degreeInKm = LocationUtils.horzDistance(aveLoc, new Location(
+				aveLat, aveLon + 1));
+		System.out.println("average lat: " + aveLat + ", 1 degree in km: "
+				+ degreeInKm);
+
+		// km per cm
+		double scaleZ = scale / degreeInKm;
+		String projection2 = "z" + Double.toString(scaleZ) + "c";
+		String viewPoint = "150/30";
+
+		String portrait = "-P";
+		double annotationLon = 1;
+		double annotationLat = 1;
+		String title = "";
+
+		Process p = null;
+		String command = null;
+
+		// create xyz file with map values
+		File mapFile = new File("map.dat");
+		FileWriter fW = new FileWriter(mapFile);
+		for (Site site : map.keySet()) {
+			String data = String.format("%4.2f %4.2f %e", site.getLocation()
+					.getLongitude(), site.getLocation().getLatitude(), Math
+					.exp(map.get(site)));
+			fW.write(data + "\n");
+		}
+		fW.close();
+
+		// create hazard map grid
+		command = gmtDir + "xyz2grd map.dat -N0 -I" + gridSampling * 60 + "m "
+				+ region + " -GMap.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample hazard map grid to higher resolution
+		command = gmtDir + "grdsample Map.grd -I30c/30c -Q -GMapHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt file
+		String cptDiscretization = Double.toString(maxValue / 10);
+		command = gmtDir + "makecpt -C" + cptFile + " -T0.0/" + maxValue + "/"
+				+ cptDiscretization + "";
+		// command = gmtDir+"makecpt -C"+cptFile+" -Qo -T0.1/"+maxValue+"/3";
+		FileWriter cptFile = new FileWriter(new File("Hazard.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// make relief color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Crelief -Z";
+		p = Runtime.getRuntime().exec(command);
+		cptFile = new FileWriter(new File("RegionRelief.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ scale + "c " + "-J" + projection2 + " " + "-E" + viewPoint
+				+ " " + "-B" + annotationLon + "/" + annotationLat + " "
+				+ "-B:." + title + ":" + " " + portrait + " " + "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// plot hazard map
+		command = gmtDir + "grdview MapHighRes.grd " + "-J" + projection
+				+ scale + "c " + " -Qi " + "-E" + viewPoint
+				+ "-IRegion_gradient.grd -CHazard.cpt -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// // add topography + illumination
+		// command =
+		// gmtDir+"grdview RegionHighRes.grd "+"-J"+projection+scale+" "
+		// +" -Qi -CRegionGray.cpt "+"-E"+viewPoint+" -IRegion_gradient.grd -K -O";
+		// p = Runtime.getRuntime().exec(command);
+		// saveOutput(faultSrcPlot,p);
+		// p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ scale + "c " + "-J" + projection2 + " " + "-E" + viewPoint
+				+ " " + "-B" + annotationLon + "/" + annotationLat + " "
+				+ "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+
+		// plot rupture surface
+		File file = new File("ruptureSurface.dat");
+		FileWriter fileW = new FileWriter(file);
+		fileW.write("> -Gp3000/74:B-Fgreen\n");
+		for (int i = 0; i < rup.getRuptureSurface()
+				.getSurfacePerimeterLocsList().size(); i++) {
+			Location loc = rup.getRuptureSurface()
+					.getSurfacePerimeterLocsList().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + " "
+					+ -loc.getDepth() + "\n");
+		}
+		fileW.write("\n");
+		fileW.close();
+		command = gmtDir + "psxyz " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + scale + "c " + "-J" + projection2
+				+ " " + "-E" + viewPoint + " " + "-B" + annotationLon + "/"
+				+ annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthick -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		faultSrcPlot.close();
+	}
+
+	public static void plotSubFaultSourceERF3D(
+			GEMSubductionFaultSourceData faultSrc) throws IOException,
+			InterruptedException {
+
+		// create ERF
+		ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
+		srcList.add(faultSrc);
+		GEM1ERF erf = new GEM1ERF(srcList);
+		TimeSpan tms = new TimeSpan(TimeSpan.NONE, TimeSpan.YEARS);
+		tms.setDuration(50.0);
+		erf.setTimeSpan(tms);
+		erf.setParameter(GEM1ERF.SUB_DISCR_PARAM_NAME, 1.0);
+		erf.setParameter(GEM1ERF.SUB_RUP_OFFSET_PARAM_NAME, 5.0);
+		erf.setParameter(GEM1ERF.SUB_FLOATER_TYPE_PARAM_NAME,
+				GEM1ERF.FLOATER_TYPE_ALONG_STRIKE_AND_DOWNDIP);
+		erf.setParameter(GEM1ERF.SUB_MAG_SCALING_REL_PARAM_NAME,
+				new WC1994_MagAreaRelationship().NAME);
+		erf.setParameter(GEM1ERF.SUB_SCALING_SIGMA_PARAM_NAME, 0.0);
+		erf.setParameter(GEM1ERF.SUB_RUP_ASPECT_RATIO_PARAM_NAME, 2.0);
+		erf.updateForecast();
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		FaultTrace trace = faultSrc.getTopTrace();
+		for (Location loc : trace) {
+			if (loc.getLongitude() < minLon)
+				minLon = loc.getLongitude();
+			if (loc.getLatitude() < minLat)
+				minLat = loc.getLatitude();
+			if (loc.getLongitude() > maxLon)
+				maxLon = loc.getLongitude();
+			if (loc.getLatitude() > maxLat)
+				maxLat = loc.getLatitude();
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		FileWriter faultSrcPlot = new FileWriter(new File("subFaultSrc3D.ps"));
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+
+		String projection = "m";
+		// cm per degree
+		double scale = 1.5;
+
+		double aveLat = (minLat + maxLat) / 2;
+		double aveLon = (minLon + maxLon) / 2;
+		Location aveLoc = new Location(aveLat, aveLon);
+		double degreeInKm = LocationUtils.horzDistance(aveLoc, new Location(
+				aveLat, aveLon + 1));
+		System.out.println("average lat: " + aveLat + ", 1 degree in km: "
+				+ degreeInKm);
+
+		// km per cm
+		double scaleZ = scale / degreeInKm;
+		String projection2 = "z" + Double.toString(scaleZ) + "c";
+		String viewPoint = "140/30";
+
+		String portrait = "-P";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// make relief color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Crelief -Z";
+		p = Runtime.getRuntime().exec(command);
+		cptFile = new FileWriter(new File("RegionRelief.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ scale + "c " + "-J" + projection2 + " " + "-E" + viewPoint
+				+ " " + "-B" + annotationLon + "/" + annotationLat + " "
+				+ "-B:." + title + ":" + " " + portrait + " " + "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// add topography + illumination
+		command = gmtDir + "grdview RegionHighRes.grd " + "-J" + projection
+				+ scale + " " + " -Qi -CRegionGray.cpt " + "-E" + viewPoint
+				+ " -IRegion_gradient.grd -K -O";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ scale + "c " + "-J" + projection2 + " " + "-E" + viewPoint
+				+ " " + "-B" + annotationLon + "/" + annotationLat + " "
+				+ "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+
+		// plot fault surface
+		File file = new File("faultSurfaces.dat");
+		FileWriter fileW = new FileWriter(file);
+		ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+				faultSrc.getTopTrace(), faultSrc.getBottomTrace(), 1.0);
+		fileW.write(">\n");
+		for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList().size(); i++) {
+			Location loc = faultSurface.getSurfacePerimeterLocsList().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + " "
+					+ -loc.getDepth() + "\n");
+		}
+		fileW.write("\n");
+
+		fileW.close();
+		command = gmtDir + "psxyz " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + scale + "c " + "-J" + projection2
+				+ " " + "-E" + viewPoint + " " + "-B" + annotationLon + "/"
+				+ annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		// plot rupture surfaces
+		for (ProbEqkRupture probRup : (ArrayList<ProbEqkRupture>) erf
+				.getSource(0).getRuptureList()) {
+			if (probRup.getMag() == faultSrc.getMfd().getMaxX()) {
+				file = new File("ruptureSurface.dat");
+				fileW = new FileWriter(file);
+				fileW.write("> -Gp3000/74:B-Fgreen\n");
+				for (int i = 0; i < probRup.getRuptureSurface()
+						.getSurfacePerimeterLocsList().size(); i++) {
+					Location loc = probRup.getRuptureSurface()
+							.getSurfacePerimeterLocsList().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ " " + -loc.getDepth() + "\n");
+				}
+				fileW.write("\n");
+				fileW.close();
+				command = gmtDir + "psxyz " + file.getAbsolutePath() + " "
+						+ region + " " + "-J" + projection + scale + "c "
+						+ "-J" + projection2 + " " + "-E" + viewPoint + " "
+						+ "-B" + annotationLon + "/" + annotationLat + " "
+						+ "-B:." + title + ":" + " " + "-M -N -Wthick -P -O -K";
+				p = Runtime.getRuntime().exec(command);
+				saveOutput(faultSrcPlot, p);
+				p.waitFor();
+				// System.out.println("rupture mag: "+probRup.getMag()+", rupture area: "+probRup.getRuptureSurface().getSurfaceArea());
+			}
+			// break;
+		}
+
+		// plot fault trace
+		file = new File("faultTrace.dat");
+		fileW = new FileWriter(file);
+		fileW.write("> -Wthick,red\n");
+		for (int i = 0; i < faultSrc.getTopTrace().size(); i++) {
+			Location loc = faultSrc.getTopTrace().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + " "
+					+ -loc.getDepth() + "\n");
+		}
+		fileW.write("\n");
+
+		fileW.close();
+		command = gmtDir + "psxyz " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + scale + "c " + "-J" + projection2
+				+ " " + "-E" + viewPoint + " " + "-B" + annotationLon + "/"
+				+ annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultSrcPlot, p);
+		p.waitFor();
+
+		faultSrcPlot.close();
+	}
+
+	public static void plotSubductionFaultSources(
+			ArrayList<GEMSubductionFaultSourceData> faultSourceDataList)
+			throws IOException, InterruptedException {
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		double minTotMomentRate = Double.MAX_VALUE;
+		double maxTotMomentRate = -Double.MAX_VALUE;
+		double minMaxMag = Double.MAX_VALUE;
+		double maxMaxMag = -Double.MAX_VALUE;
+		double minOccurrenceRate = Double.MAX_VALUE;
+		double maxOccurrenceRate = -Double.MAX_VALUE;
+		double minMinMag = Double.MAX_VALUE;
+		double maxMinMag = -Double.MAX_VALUE;
+		for (GEMSubductionFaultSourceData faultSrcData : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					faultSrcData.getTopTrace(), faultSrcData.getBottomTrace(),
+					1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = faultSrcData.getTopTrace();
+			for (Location loc : trace) {
+				if (loc.getLongitude() < minLon)
+					minLon = loc.getLongitude();
+				if (loc.getLatitude() < minLat)
+					minLat = loc.getLatitude();
+				if (loc.getLongitude() > maxLon)
+					maxLon = loc.getLongitude();
+				if (loc.getLatitude() > maxLat)
+					maxLat = loc.getLatitude();
+			}
+			if (faultSrcData.getMfd().getTotalMomentRate() / area < minTotMomentRate)
+				minTotMomentRate = faultSrcData.getMfd().getTotalMomentRate()
+						/ area;
+			if (faultSrcData.getMfd().getTotalMomentRate() / area > maxTotMomentRate)
+				maxTotMomentRate = faultSrcData.getMfd().getTotalMomentRate()
+						/ area;
+			if (faultSrcData.getMfd().getMaxX() < minMaxMag)
+				minMaxMag = faultSrcData.getMfd().getMaxX();
+			if (faultSrcData.getMfd().getMaxX() > maxMaxMag)
+				maxMaxMag = faultSrcData.getMfd().getMaxX();
+			if (faultSrcData.getMfd().getMinX() < minMinMag)
+				minMinMag = faultSrcData.getMfd().getMinX();
+			if (faultSrcData.getMfd().getMinX() > maxMinMag)
+				maxMinMag = faultSrcData.getMfd().getMinX();
+			if (faultSrcData.getMfd().getTotalIncrRate() / area < minOccurrenceRate)
+				minOccurrenceRate = faultSrcData.getMfd().getTotalIncrRate()
+						/ area;
+			if (faultSrcData.getMfd().getTotalIncrRate() / area > maxOccurrenceRate)
+				maxOccurrenceRate = faultSrcData.getMfd().getTotalIncrRate()
+						/ area;
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 6.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		FileWriter momentRateFile = new FileWriter(new File(
+				"subFaultTotMomentRate.ps"));
+		FileWriter geometryFile = new FileWriter(
+				new File("subFaultGeometry.ps"));
+		FileWriter maxMagFile = new FileWriter(new File(
+				"subfaultMaxMagnitude.ps"));
+		FileWriter occurrenceRateFile = new FileWriter(new File(
+				"subFaultOccurrenceRate.ps"));
+		FileWriter minMagFile = new FileWriter(new File(
+				"subFaultMinMagnitude.ps"));
+		Process p = null;
+		String command = null;
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make cpt for total moment rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minTotMomentRate
+				+ "/" + maxTotMomentRate + "/2";// +cptDiscretization+"";
+		FileWriter cptFaultFile = new FileWriter(
+				new File("FaultMomentRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptTabel = readCptFile("FaultMomentRate.cpt");
+
+		// make cpt for maximum magnitude
+		command = gmtDir + "makecpt -Cseis -I -N -T" + minMaxMag + "/"
+				+ maxMaxMag + "/0.01";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("FaultMaxMag.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptMaxMagTable = readCptFile("FaultMaxMag.cpt");
+
+		// make cpt for occurrence rate
+		command = gmtDir + "makecpt -Cseis -I -Qo -N -T" + minOccurrenceRate
+				+ "/" + maxOccurrenceRate + "/3";// +cptDiscretization+"";
+		cptFaultFile = new FileWriter(new File("FaultOccurrenceRate.cpt"));
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(cptFaultFile, p);
+		cptFaultFile.close();
+		p.waitFor();
+		// read cpt file
+		ArrayList<double[][]> cptOccurrenceRateTable = readCptFile("FaultOccurrenceRate.cpt");
+
+		// make cpt for minimum magnitude
+		ArrayList<double[][]> cptMinMagTable = null;
+		if (minMinMag != maxMinMag) {
+			command = gmtDir + "makecpt -Cseis -I -N -T" + minMinMag + "/"
+					+ maxMinMag + "/0.01";// +cptDiscretization+"";
+			cptFaultFile = new FileWriter(new File("FaultMinMag.cpt"));
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(cptFaultFile, p);
+			cptFaultFile.close();
+			p.waitFor();
+			// read cpt file
+			cptMinMagTable = readCptFile("FaultMinMag.cpt");
+		}
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// // set params
+		// command = gmtDir+"gmtset PAPER_MEDIA = a3"+
+		// region;
+		// p = Runtime.getRuntime().exec(command);
+		// p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// make relief color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Crelief -Z";
+		p = Runtime.getRuntime().exec(command);
+		cptFile = new FileWriter(new File("RegionRelief.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			command = gmtDir
+					+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+					+ region + " " + "-J" + projection + size + "i ";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot fault surfaces
+		File file = new File("faultSurfaces.dat");
+		FileWriter fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = rup.getTopTrace();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalMomentRate() / area,
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = rup.getTopTrace();
+			fileW.write(">\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = rup.getTopTrace();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getMaxX(), minMaxMag,
+					maxMaxMag, cptMaxMagTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault surfaces
+		file = new File("faultSurfaces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = rup.getTopTrace();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+					.size(); i++) {
+				Location loc = faultSurface.getSurfacePerimeterLocsList()
+						.get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault surfaces
+			file = new File("faultSurfaces.dat");
+			fileW = new FileWriter(file);
+			for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+				ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+						rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+				double area = Double.NaN;
+				if (faultSurface.getSurfaceWidth() > 0)
+					area = faultSurface.getSurfaceArea();
+				else
+					area = faultSurface.getSurfaceLength();
+				FaultTrace trace = rup.getTopTrace();
+				fileW.write("> ");
+				double[] color = getColor(rup.getMfd().getMinX(), minMinMag,
+						maxMinMag, cptMinMagTable);
+				fileW.write("-Gp3000/74:B-F" + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList()
+						.size(); i++) {
+					Location loc = faultSurface.getSurfacePerimeterLocsList()
+							.get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -Wthin -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = rup.getTopTrace();
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalMomentRate() / area,
+					minTotMomentRate, maxTotMomentRate, cptTabel);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			fileW.write("> -Wthickest,red\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(geometryFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			// fileW.write("> -Wfat\n");
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getMaxX(), minMaxMag,
+					maxMaxMag, cptMaxMagTable);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+		// plot fault traces
+		file = new File("faultTraces.dat");
+		fileW = new FileWriter(file);
+		for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+			ApproxEvenlyGriddedSurface faultSurface = new ApproxEvenlyGriddedSurface(
+					rup.getTopTrace(), rup.getBottomTrace(), 1.0);
+			double area = Double.NaN;
+			if (faultSurface.getSurfaceWidth() > 0)
+				area = faultSurface.getSurfaceArea();
+			else
+				area = faultSurface.getSurfaceLength();
+			FaultTrace trace = rup.getTopTrace();
+			// fileW.write("> -Wfat\n");
+			fileW.write("> ");
+			double[] color = getColor(rup.getMfd().getTotalIncrRate() / area,
+					minOccurrenceRate, maxOccurrenceRate,
+					cptOccurrenceRateTable);
+			fileW.write("-Wfat," + Math.round(color[0]) + "/"
+					+ Math.round(color[1]) + "/" + Math.round(color[2]) + "\n");
+			for (int i = 0; i < rup.getTopTrace().size(); i++) {
+				Location loc = rup.getTopTrace().get(i);
+				fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			}
+			fileW.write("\n");
+		}
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+		if (cptMinMagTable != null) {
+			// plot fault traces
+			file = new File("faultTraces.dat");
+			fileW = new FileWriter(file);
+			for (GEMSubductionFaultSourceData rup : faultSourceDataList) {
+				// fileW.write("> -Wfat\n");
+				fileW.write("> ");
+				double[] color = getColor(rup.getMfd().getMinX(), minMinMag,
+						maxMinMag, cptMinMagTable);
+				fileW.write("-Wfat," + Math.round(color[0]) + "/"
+						+ Math.round(color[1]) + "/" + Math.round(color[2])
+						+ "\n");
+				for (int i = 0; i < rup.getTopTrace().size(); i++) {
+					Location loc = rup.getTopTrace().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+			}
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %lg";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		String param = "";
+		command = gmtDir + "psscale -D8.0/-1.0/20c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CFaultMomentRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(momentRateFile, p);
+		p.waitFor();
+		param = "";
+		double discretization = 0.1;
+		command = gmtDir + "psscale -D8.0/-1.0/20c/0.4ch -N1 -O -K -B"
+				+ discretization + "::/:" + param + ": -CFaultMaxMag.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(maxMagFile, p);
+		p.waitFor();
+
+		if (cptMinMagTable != null) {
+			discretization = 0.2;
+			command = gmtDir + "psscale -D8.0/-1.0/20c/0.4ch -N1 -O -K -B"
+					+ discretization + "::/:" + param + ": -CFaultMinMag.cpt";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(minMagFile, p);
+			p.waitFor();
+		}
+
+		// set params
+		command = gmtDir + "gmtset D_FORMAT = %2.1e";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+		param = "";
+		command = gmtDir + "psscale -D7.0/-1.0/22c/0.4ch -N1 -L -O -K -B::/:"
+				+ param + ": -CFaultOccurrenceRate.cpt";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(occurrenceRateFile, p);
+		p.waitFor();
+
+		momentRateFile.close();
+		geometryFile.close();
+		maxMagFile.close();
+		occurrenceRateFile.close();
+		minMagFile.close();
+	}
+
+	public static void plotFaultSourceERF(GEMFaultSourceData srcData)
+			throws IOException, InterruptedException {
+
+		// create fault surface
+		StirlingGriddedSurface faultSurface = new StirlingGriddedSurface(
+				srcData.getTrace(), srcData.getDip(),
+				srcData.getSeismDepthUpp(), srcData.getSeismDepthLow(), 1.0);
+
+		// create ERF
+		ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
+		srcList.add(srcData);
+		GEM1ERF erf = new GEM1ERF(srcList);
+		TimeSpan tms = new TimeSpan(TimeSpan.NONE, TimeSpan.YEARS);
+		tms.setDuration(50.0);
+		erf.setTimeSpan(tms);
+		erf.setParameter(GEM1ERF.FAULT_DISCR_PARAM_NAME, 1.0);
+		erf.setParameter(GEM1ERF.FAULT_RUP_OFFSET_PARAM_NAME, 100.0);
+		erf.setParameter(GEM1ERF.FAULT_FLOATER_TYPE_PARAM_NAME,
+				GEM1ERF.FLOATER_TYPE_ALONG_STRIKE_AND_DOWNDIP);
+		erf.setParameter(GEM1ERF.FAULT_MAG_SCALING_REL_PARAM_NAME,
+				new WC1994_MagAreaRelationship().NAME);
+		erf.setParameter(GEM1ERF.FAULT_SCALING_SIGMA_PARAM_NAME, 0.0);
+		erf.setParameter(GEM1ERF.FAULT_RUP_ASPECT_RATIO_PARAM_NAME, 2.0);
+		erf.updateForecast();
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		FaultTrace trace = srcData.getTrace();
+		for (Location loc : trace) {
+			if (loc.getLongitude() < minLon)
+				minLon = loc.getLongitude();
+			if (loc.getLatitude() < minLat)
+				minLat = loc.getLatitude();
+			if (loc.getLongitude() > maxLon)
+				maxLon = loc.getLongitude();
+			if (loc.getLatitude() > maxLat)
+				maxLat = loc.getLatitude();
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 8.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		Process p = null;
+		String command = null;
+
+		FileWriter faultERF = new FileWriter(new File("faultERF.ps"));
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultERF, p);
+		p.waitFor();
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultERF, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultERF, p);
+		p.waitFor();
+
+		// plot fault surface
+		File file = new File("faultSurface.dat");
+		FileWriter fileW = new FileWriter(file);
+		fileW.write(">\n");
+		for (int i = 0; i < faultSurface.getSurfacePerimeterLocsList().size(); i++) {
+			Location loc = faultSurface.getSurfacePerimeterLocsList().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+		}
+		fileW.write("\n");
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultERF, p);
+		p.waitFor();
+
+		// plot fault trace
+		file = new File("faultTrace.dat");
+		fileW = new FileWriter(file);
+		fileW.write("> -Wthickest,red\n");
+		for (int i = 0; i < srcData.getTrace().size(); i++) {
+			Location loc = srcData.getTrace().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+		}
+		fileW.write("\n");
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(faultERF, p);
+		p.waitFor();
+
+		// plot rupture surfaces
+		for (ProbEqkRupture probRup : (ArrayList<ProbEqkRupture>) erf
+				.getSource(0).getRuptureList()) {
+			if (probRup.getMag() == srcData.getMfd().getMaxX()) {
+				file = new File("ruptureSurface.dat");
+				fileW = new FileWriter(file);
+				fileW.write("> -Gp3000/74:B-Fgreen\n");
+				for (int i = 0; i < probRup.getRuptureSurface()
+						.getSurfacePerimeterLocsList().size(); i++) {
+					Location loc = probRup.getRuptureSurface()
+							.getSurfacePerimeterLocsList().get(i);
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+				fileW.close();
+				command = gmtDir + "psxy " + file.getAbsolutePath() + " "
+						+ region + " " + "-J" + projection + size + "i " + "-B"
+						+ annotationLon + "/" + annotationLat + " " + "-B:."
+						+ title + ":" + " " + "-M -N -Wthin -P -O -K";
+				p = Runtime.getRuntime().exec(command);
+				saveOutput(faultERF, p);
+				p.waitFor();
+				break;
+			}
+		}
+
+		faultERF.close();
+	}
+
+	public static void plotPointSourcesERF(List<GEMPointSourceData> srcDataList)
+			throws IOException, InterruptedException {
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		for (GEMPointSourceData src : srcDataList) {
+			Location loc = src.getHypoMagFreqDistAtLoc().getLocation();
+			if (loc.getLongitude() < minLon)
+				minLon = loc.getLongitude();
+			if (loc.getLatitude() < minLat)
+				minLat = loc.getLatitude();
+			if (loc.getLongitude() > maxLon)
+				maxLon = loc.getLongitude();
+			if (loc.getLatitude() > maxLat)
+				maxLat = loc.getLatitude();
+		}
+		// minLon = minLon - 1;
+		// maxLon = maxLon + 1;
+		// minLat = minLat - 1;
+		// maxLat = maxLat + 1;
+
+		// // create ERF
+		// ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
+		// srcList.addAll(srcDataList);
+		// GEM1ERF erf = new GEM1ERF(srcList);
+		// TimeSpan tms = new TimeSpan(TimeSpan.NONE, TimeSpan.YEARS);
+		// tms.setDuration(50.0);
+		// erf.setTimeSpan(tms);
+		// erf.setParameter(GEM1ERF.GRIDDED_SEIS_RUP_TYPE_NAME,
+		// GEM1ERF.GRIDDED_SEIS_RUP_TYPE_LINE);
+		// erf.setParameter(GEM1ERF.GRIDDED_SEIS_MAG_SCALING_REL_PARAM_NAME, new
+		// WC1994_MagLengthRelationship().NAME);
+		// erf.updateForecast();
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 5.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		Process p = null;
+		String command = null;
+
+		FileWriter pointSourcesERF = new FileWriter(new File(
+				"pointSourcesERF.ps"));
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(pointSourcesERF, p);
+		p.waitFor();
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(pointSourcesERF, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(pointSourcesERF, p);
+		p.waitFor();
+
+		// plot point sources
+		for (int is = 0; is < srcDataList.size(); is++) {
+			System.out.println("Plotting source: " + (is + 1) + " of "
+					+ srcDataList.size());
+			File file = new File("sourceLocList.dat");
+			FileWriter fileW = new FileWriter(file);
+			fileW.write("> -G255/0/0 -Wred\n");
+			Location loc = srcDataList.get(is).getHypoMagFreqDistAtLoc()
+					.getLocation();
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+			fileW.write("\n");
+			fileW.close();
+			command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+					+ " " + "-J" + projection + size + "i " + "-B"
+					+ annotationLon + "/" + annotationLat + " " + "-B:."
+					+ title + ":" + " " + "-M -N -Sp0.05 -P -O -K";
+			p = Runtime.getRuntime().exec(command);
+			saveOutput(pointSourcesERF, p);
+			p.waitFor();
+		}
+
+		// // plot ruptures
+		// // loop over sources
+		// for(int is=0;is<erf.getNumSources();is++){
+		// // loop over ruptures
+		// for(ProbEqkRupture probRup:
+		// (ArrayList<ProbEqkRupture>)erf.getSource(is).getRuptureList()){
+		// if(probRup.getMag()==srcDataList.get(is).getHypoMagFreqDistAtLoc().getFirstMagFreqDist().getMinX()){
+		// System.out.println("Plotting max magnitude rupture: ");
+		// File file = new File("ruptureSurface.dat");
+		// FileWriter fileW = new FileWriter(file);
+		// ListIterator<Location> topTrace =
+		// probRup.getRuptureSurface().getColumnIterator(0);
+		// if(probRup.getRuptureSurface().getLocationList().size() > 1){
+		// fileW.write("> -Wthick,red\n");
+		// }
+		// else{
+		// fileW.write("> -G255/0/0 -Wred\n");
+		// }
+		// while(topTrace.hasNext())
+		// {
+		// Location loc = topTrace.next();
+		// fileW.write(loc.getLongitude()+" "+loc.getLatitude()+"\n");
+		// }
+		// fileW.write("\n");
+		// fileW.close();
+		// if(probRup.getRuptureSurface().getLocationList().size() > 1){
+		// command = gmtDir+"psxy "+
+		// file.getAbsolutePath() + " "+
+		// region+" " +
+		// "-J"+projection+size+"i " +
+		// "-B"+annotationLon+"/"+annotationLat+" " +
+		// "-B:."+title + ":"+" "+
+		// "-M -N -Wthin -P -O -K";
+		// }
+		// else{
+		// command = gmtDir+"psxy "+
+		// file.getAbsolutePath() + " "+
+		// region+" " +
+		// "-J"+projection+size+"i " +
+		// "-B"+annotationLon+"/"+annotationLat+" " +
+		// "-B:."+title + ":"+" "+
+		// "-M -N -Sp0.1 -P -O -K";
+		// }
+		// p = Runtime.getRuntime().exec(command);
+		// saveOutput(pointSourcesERF,p);
+		// p.waitFor();
+		// break;
+		// }
+		// }
+		// //break;
+		// }
+
+		pointSourcesERF.close();
+	}
+
+	public static void plotAreaSourceERF(GEMAreaSourceData srcData)
+			throws IOException, InterruptedException {
+
+		// create ERF
+		ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
+		srcList.add(srcData);
+		GEM1ERF erf = new GEM1ERF(srcList);
+		TimeSpan tms = new TimeSpan(TimeSpan.NONE, TimeSpan.YEARS);
+		tms.setDuration(50.0);
+		erf.setTimeSpan(tms);
+		erf.setParameter(GEM1ERF.AREA_SRC_DISCR_PARAM_NAME, 0.1);
+		erf.setParameter(GEM1ERF.AREA_SRC_RUP_TYPE_NAME,
+				GEM1ERF.AREA_SRC_RUP_TYPE_LINE);
+		erf.setParameter(GEM1ERF.AREA_SRC_MAG_SCALING_REL_PARAM_NAME,
+				new WC1994_MagAreaRelationship().NAME);
+		erf.updateForecast();
+
+		double minLon = Double.MAX_VALUE;
+		double minLat = Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		LocationList border = srcData.getRegion().getBorder();
+		for (Location loc : border) {
+			if (loc.getLongitude() < minLon)
+				minLon = loc.getLongitude();
+			if (loc.getLatitude() < minLat)
+				minLat = loc.getLatitude();
+			if (loc.getLongitude() > maxLon)
+				maxLon = loc.getLongitude();
+			if (loc.getLatitude() > maxLat)
+				maxLat = loc.getLatitude();
+		}
+		minLon = minLon - 1;
+		maxLon = maxLon + 1;
+		minLat = minLat - 1;
+		maxLat = maxLat + 1;
+
+		String region = "-R" + minLon + "/" + maxLon + "/" + minLat + "/"
+				+ maxLat;
+		double size = 8.0;
+		String projection = "M";// "-JX"+plotSizeX+"/"+plotSizeY;
+		String portrait = "";
+		double annotationLon = 5;
+		double annotationLat = 5;
+		String title = "";
+
+		Process p = null;
+		String command = null;
+
+		FileWriter areaERF = new FileWriter(new File("areaERF.ps"));
+
+		// set params
+		command = gmtDir + "gmtset ANOT_FONT_SIZE = 9p" + region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// cut grid file for the specific region
+		command = gmtDir + "grdcut " + eTopoFile + " " + "-GRegion.grd" + " "
+				+ region;
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// resample grid to higher resolution
+		command = gmtDir
+				+ "grdsample Region.grd -I30c/30c -GRegionHighRes.grd -F";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make a shaded illumination file
+		command = gmtDir
+				+ "grdgradient RegionHighRes.grd -Ne.5 -A45 -M -GRegion_gradient.grd";
+		p = Runtime.getRuntime().exec(command);
+		p.waitFor();
+
+		// make gray color palette for topography
+		command = gmtDir + "grd2cpt " + eTopoFile + " -Cgray -Z";
+		p = Runtime.getRuntime().exec(command);
+		FileWriter cptFile = new FileWriter(new File("RegionGray.cpt"));
+		saveOutput(cptFile, p);
+		cptFile.close();
+		p.waitFor();
+
+		// plot base map
+		command = gmtDir + "psbasemap " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " " + portrait + " "
+				+ "-Xc -Yc -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(areaERF, p);
+		p.waitFor();
+
+		// add topography + illumination
+		command = gmtDir
+				+ "grdimage RegionHighRes.grd -IRegion_gradient.grd -CRegionGray.cpt -P -O -K"
+				+ region + " " + "-J" + projection + size + "i ";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(areaERF, p);
+		p.waitFor();
+
+		// plot coast line
+		command = gmtDir + "pscoast  " + region + " " + "-J" + projection
+				+ size + "i " + "-B" + annotationLon + "/" + annotationLat
+				+ " " + "-B:." + title + ":" + " "
+				+ "-Wthin -N1 -A1000 -Di -P -Slightblue -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(areaERF, p);
+		p.waitFor();
+
+		// plot area boundary
+		File file = new File("areaBoundary.dat");
+		FileWriter fileW = new FileWriter(file);
+		fileW.write(">\n");
+		for (int i = 0; i < srcData.getRegion().getBorder().size(); i++) {
+			Location loc = srcData.getRegion().getBorder().get(i);
+			fileW.write(loc.getLongitude() + " " + loc.getLatitude() + "\n");
+		}
+		fileW.write(srcData.getRegion().getBorder().get(0).getLongitude() + " "
+				+ srcData.getRegion().getBorder().get(0).getLatitude() + "\n");
+		fileW.write("\n");
+		fileW.close();
+		command = gmtDir + "psxy " + file.getAbsolutePath() + " " + region
+				+ " " + "-J" + projection + size + "i " + "-B" + annotationLon
+				+ "/" + annotationLat + " " + "-B:." + title + ":" + " "
+				+ "-M -N -Wthin -P -O -K";
+		p = Runtime.getRuntime().exec(command);
+		saveOutput(areaERF, p);
+		p.waitFor();
+
+		// plot ruptures
+		for (ProbEqkRupture probRup : (ArrayList<ProbEqkRupture>) erf
+				.getSource(0).getRuptureList()) {
+			// System.out.println("max magnitude: "+srcData.getMagfreqDistFocMech().getFirstMagFreqDist().getMaxX());
+			if (probRup.getMag() == srcData.getMagfreqDistFocMech()
+					.getFirstMagFreqDist().getMaxX()) {
+				file = new File("ruptureSurface.dat");
+				fileW = new FileWriter(file);
+				ListIterator<Location> topTrace = probRup.getRuptureSurface()
+						.getColumnIterator(0);
+				if (probRup.getRuptureSurface().getLocationList().size() > 1) {
+					fileW.write("> -Wthick,red\n");
+				} else {
+					fileW.write("> -G255/0/0 -Wred\n");
+				}
+				while (topTrace.hasNext()) {
+					Location loc = topTrace.next();
+					fileW.write(loc.getLongitude() + " " + loc.getLatitude()
+							+ "\n");
+				}
+				fileW.write("\n");
+				fileW.close();
+				if (probRup.getRuptureSurface().getLocationList().size() > 1) {
+					command = gmtDir + "psxy " + file.getAbsolutePath() + " "
+							+ region + " " + "-J" + projection + size + "i "
+							+ "-B" + annotationLon + "/" + annotationLat + " "
+							+ "-B:." + title + ":" + " "
+							+ "-M -N -Wthin -P -O -K";
+				} else {
+					command = gmtDir + "psxy " + file.getAbsolutePath() + " "
+							+ region + " " + "-J" + projection + size + "i "
+							+ "-B" + annotationLon + "/" + annotationLat + " "
+							+ "-B:." + title + ":" + " "
+							+ "-M -N -Sp0.1 -P -O -K";
+				}
+				p = Runtime.getRuntime().exec(command);
+				saveOutput(areaERF, p);
+				p.waitFor();
+			}
+		}
+
+		areaERF.close();
+	}
+
+	private static Map<String, Double> boundingBoxGroundMotionField(
+			Map<Site, Double> map) {
+		double minLat = Double.MAX_VALUE;
+		double minLon = Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		for (Site site : map.keySet()) {
+			Location middlePoint = site.getLocation();
+			if (middlePoint.getLatitude() < minLat)
+				minLat = middlePoint.getLatitude();
+			if (middlePoint.getLatitude() > maxLat)
+				maxLat = middlePoint.getLatitude();
+			if (middlePoint.getLongitude() < minLon)
+				minLon = middlePoint.getLongitude();
+			if (middlePoint.getLongitude() > maxLon)
+				maxLon = middlePoint.getLongitude();
+		}
+		Map<String, Double> boundingBox = new HashMap<String, Double>();
+		boundingBox.put("minLat", minLat);
+		boundingBox.put("maxLat", maxLat);
+		boundingBox.put("minLon", minLon);
+		boundingBox.put("maxLon", maxLon);
+		return boundingBox;
+	}
+
+	private static double maxValue(Map<Site, Double> map) {
+		double max = -Double.MAX_VALUE;
+		for (Site site : map.keySet())
+			if (max < Math.exp(map.get(site)))
+				max = Math.exp(map.get(site));
+		return max;
+	}
+
+	private static double minValue(Map<Site, Double> map) {
+		double min = Double.MAX_VALUE;
+		for (Site site : map.keySet())
+			if (min > Math.exp(map.get(site)))
+				min = Math.exp(map.get(site));
+		return min;
+	}
+
+	private static void saveOutput(FileWriter outFile, Process p) {
+		String s = null;
+		BufferedReader stdInput = new BufferedReader(new InputStreamReader(
+				p.getInputStream()));
+		BufferedReader stdError = new BufferedReader(new InputStreamReader(
+				p.getErrorStream()));
+		// read the output from the command
+		// System.out.println("Here is the standard output of the command:\n");
+		try {
+			while ((s = stdInput.readLine()) != null) {
+				outFile.append(s + "\n");// .write(s+"\n");
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		// read any errors from the attempted command
+		System.out
+				.println("Here is the standard error of the command (if any):\n");
+		try {
+			while ((s = stdError.readLine()) != null) {
+				System.out.println(s);
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private static String saveString(Process p) {
+		String output = "";
+		String s = null;
+		BufferedReader stdInput = new BufferedReader(new InputStreamReader(
+				p.getInputStream()));
+		BufferedReader stdError = new BufferedReader(new InputStreamReader(
+				p.getErrorStream()));
+		// read the output from the command
+		// System.out.println("Here is the standard output of the command:\n");
+		try {
+			while ((s = stdInput.readLine()) != null) {
+				output = output + " " + s;
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		// read any errors from the attempted command
+		System.out
+				.println("Here is the standard error of the command (if any):\n");
+		try {
+			while ((s = stdError.readLine()) != null) {
+				System.out.println(s);
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return output;
+	}
+
+	private static Map<String, Double> boundingBoxStochasticSet(
+			ArrayList<EqkRupture> eventSet) {
+		double minLat = Double.MAX_VALUE;
+		double minLon = Double.MAX_VALUE;
+		double maxLat = -Double.MAX_VALUE;
+		double maxLon = -Double.MAX_VALUE;
+		for (EqkRupture rup : eventSet) {
+			Location middlePoint = rup.getRuptureSurface().get(
+					rup.getRuptureSurface().getNumRows() / 2,
+					rup.getRuptureSurface().getNumCols() / 2);
+			if (middlePoint.getLatitude() < minLat)
+				minLat = middlePoint.getLatitude();
+			if (middlePoint.getLatitude() > maxLat)
+				maxLat = middlePoint.getLatitude();
+			if (middlePoint.getLongitude() < minLon)
+				minLon = middlePoint.getLongitude();
+			if (middlePoint.getLongitude() > maxLon)
+				maxLon = middlePoint.getLongitude();
+		}
+		Map<String, Double> boundingBox = new HashMap<String, Double>();
+		boundingBox.put("minLat", minLat);
+		boundingBox.put("maxLat", maxLat);
+		boundingBox.put("minLon", minLon);
+		boundingBox.put("maxLon", maxLon);
+		return boundingBox;
+	}
+
+	private static ArrayList<double[][]> readCptFile(String cptFile)
+			throws IOException {
+		ArrayList<double[][]> cptTable = new ArrayList<double[][]>();
+		BufferedReader br = new BufferedReader(new FileReader(cptFile));
+		String line = null;
+		while ((line = br.readLine()) != null) {
+			while (line.startsWith("#")) {
+				line = br.readLine();
+			}
+			StringTokenizer data = new StringTokenizer(line);
+			double binLowerLimit = Double.valueOf(data.nextToken());
+			double lowerLimitColor1 = Double.valueOf(data.nextToken());
+			double lowerLimitColor2 = Double.valueOf(data.nextToken());
+			double lowerLimitColor3 = Double.valueOf(data.nextToken());
+			double binUpperLimit = Double.valueOf(data.nextToken());
+			double upperLimitColor1 = Double.valueOf(data.nextToken());
+			double upperLimitColor2 = Double.valueOf(data.nextToken());
+			double upperLimitColor3 = Double.valueOf(data.nextToken());
+			double[][] cptEntry = new double[2][];
+			cptEntry[0] = new double[] { binLowerLimit, lowerLimitColor1,
+					lowerLimitColor2, lowerLimitColor3 };
+			cptEntry[1] = new double[] { binUpperLimit, upperLimitColor1,
+					upperLimitColor2, upperLimitColor3 };
+			cptTable.add(cptEntry);
+		}
+
+		return cptTable;
+	}
+
+	private static double[] getColor(double val, double minVal, double maxVal,
+			ArrayList<double[][]> cptTable) {
+		double[] color = null;
+		if (val < cptTable.get(1)[0][0])
+			color = new double[] { cptTable.get(1)[0][1],
+					cptTable.get(1)[0][2], cptTable.get(1)[0][3] };
+		for (int i = 0; i < cptTable.size(); i++) {
+			if (val >= cptTable.get(i)[0][0] && val < cptTable.get(i)[1][0]) {
+				color = new double[] { cptTable.get(i)[0][1],
+						cptTable.get(i)[0][2], cptTable.get(i)[0][3] };
+			}
+		}
+		if (val > cptTable.get(cptTable.size() - 1)[0][0]) {
+			color = new double[] { cptTable.get(cptTable.size() - 1)[0][1],
+					cptTable.get(cptTable.size() - 1)[0][2],
+					cptTable.get(cptTable.size() - 1)[0][3] };
+		}
+		// System.out.println("value: "+val+", color: "+color[0]+" "+color[1]+" "+color[2]);
+		return color;
+	}
+}

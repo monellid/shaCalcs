@@ -1,0 +1,5 @@
+package org.opensha.gem.GEM1.util;
+
+public class GEM1ERFCreator {
+
+}

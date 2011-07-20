@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nrml xmlns:gml="http://www.opengis.net/gml" 
+      xmlns="http://openquake.org/xmlns/nrml/0.2"
+      gml:id="n1">
+      
+        <logicTree logicTreeID="lt1">
+        
+        <logicTreeBranchingLevel branchingLevelID="lt11">
+        
+            <logicTreeBranchSet branchSetID="lt11_1" uncertaintyType="sourceModel">
+            
+                <logicTreeBranch branchID="_11">
+                    <uncertaintyModel>source_model_1.xml</uncertaintyModel>
+                    <uncertaintyWeight>0.2</uncertaintyWeight>
+                </logicTreeBranch>
+                
+                <logicTreeBranch branchID="_12">
+                    <uncertaintyModel>source_model_2.xml</uncertaintyModel>
+                    <uncertaintyWeight>0.6</uncertaintyWeight>
+                </logicTreeBranch>
+                
+                <logicTreeBranch branchID="_13">
+                    <uncertaintyModel>source_model_3.xml</uncertaintyModel>
+                    <uncertaintyWeight>0.2</uncertaintyWeight>
+                </logicTreeBranch>
+
+            </logicTreeBranchSet>
+            
+        </logicTreeBranchingLevel>
+        
+        <logicTreeBranchingLevel branchingLevelID="lt12">
+        
+            <logicTreeBranchSet branchSetID="lt12_1" uncertaintyType="abGRAbsolute" applyToBranches="_11 _12" applyToSourceType="area">
+            
+                <logicTreeBranch branchID="_11_12_21">
+                    <uncertaintyModel>3.0 1.0</uncertaintyModel>
+                    <uncertaintyWeight>0.2</uncertaintyWeight>
+                </logicTreeBranch>
+                
+                <logicTreeBranch branchID="_11_12_22">
+                    <uncertaintyModel>3.2 1.2</uncertaintyModel>
+                    <uncertaintyWeight>0.6</uncertaintyWeight>
+                </logicTreeBranch>
+                
+                <logicTreeBranch branchID="_11_12_23">
+                    <uncertaintyModel>2.8 0.8</uncertaintyModel>
+                    <uncertaintyWeight>0.2</uncertaintyWeight>
+                </logicTreeBranch>
+                
+            </logicTreeBranchSet>
+            
+            <logicTreeBranchSet branchSetID="lt12_2" uncertaintyType="abGRAbsolute" applyToBranches="_13" applyToSources="_2 _3">
+            
+                <logicTreeBranch branchID="_13_21">
+                    <uncertaintyModel>2.0 1.0</uncertaintyModel>
+                    <uncertaintyWeight>0.2</uncertaintyWeight>
+                </logicTreeBranch>
+                
+                <logicTreeBranch branchID="_13_22">
+                    <uncertaintyModel>1.8 0.8</uncertaintyModel>
+                    <uncertaintyWeight>0.8</uncertaintyWeight>
+                </logicTreeBranch>
+
+            </logicTreeBranchSet>
+        
+        </logicTreeBranchingLevel>
+            
+            <logicTreeBranchSet branchingLevel="3" uncertaintyType="maxMagGRAbsolute" applyToTectonicRegionType="Active Shallow Crust">
+                <logicTreeBranch branchID="_31">
+                    <uncertaintyModel>7.5</uncertaintyModel>
+                    <uncertaintyWeight>0.2</uncertaintyWeight>
+                </logicTreeBranch>
+                
+                <logicTreeBranch branchID="_32">
+                    <uncertaintyModel>7.2</uncertaintyModel>
+                    <uncertaintyWeight>0.8</uncertaintyWeight>
+                </logicTreeBranch>
+
+            </logicTreeBranchSet>
+            
+        </logicTree>
+</nrml>

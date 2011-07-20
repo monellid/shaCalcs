@@ -1,0 +1,41 @@
+package org.opengem.codes.hazard.calc.GemModelData.nshmp.us;
+
+import org.opengem.codes.hazard.calc.GemModelParsers.GemFileParser;
+
+import java.io.FileNotFoundException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Set;
+
+import org.opengem.codes.hazard.calc.GemModelParsers.nshmp.NshmpFault2GemSourceData;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.SourceData.GEMSourceData;
+import org.opensha.sha.util.TectonicRegionType;
+
+public class NshmpBFaultTest extends GemFileParser{
+
+	public NshmpBFaultTest(double latmin, double latmax, double lonmin, double lonmax) throws FileNotFoundException{
+		
+		srcDataList = new ArrayList<GEMSourceData>();
+		
+		// hash map containing fault file with corresponding weight
+		HashMap<String,Double> faultFile = new HashMap<String,Double>();
+		
+		String inDir = "../../data/nshmp/california/";
+		faultFile.put(inDir+"bFault_stitched_D2.1_GR0_test.in",1.0);
+		
+		// iterator over files
+		Set<String> fileName = faultFile.keySet();
+		Iterator<String> iterFileName = fileName.iterator();
+		while(iterFileName.hasNext()){
+			String key = iterFileName.next();
+			System.out.println("Processing file: "+key+", weight: "+faultFile.get(key));
+			// read NSHMP input file
+			NshmpFault2GemSourceData fm = new NshmpFault2GemSourceData(key,TectonicRegionType.ACTIVE_SHALLOW,faultFile.get(key),
+					latmin, latmax, lonmin, lonmax);
+			for(int i=0;i<fm.getList().size();i++) srcDataList.add(fm.getList().get(i));
+		}
+		
+	}
+	
+}
