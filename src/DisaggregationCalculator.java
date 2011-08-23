@@ -1,7 +1,14 @@
+import java.rmi.RemoteException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.opensha.commons.data.Site;
+import org.opensha.commons.data.function.ArbitrarilyDiscretizedFunc;
+import org.opensha.commons.data.function.DiscretizedFuncAPI;
+import org.opensha.commons.geo.Location;
+import org.opensha.commons.geo.LocationUtils;
+import org.opensha.sha.calc.HazardCurveCalculator;
 import org.opensha.sha.earthquake.EqkRupForecastAPI;
 import org.opensha.sha.earthquake.ProbEqkRupture;
 import org.opensha.sha.earthquake.ProbEqkSource;
@@ -9,63 +16,119 @@ import org.opensha.sha.imr.ScalarIntensityMeasureRelationshipAPI;
 import org.opensha.sha.imr.param.PropagationEffectParams.DistanceRupParameter;
 import org.opensha.sha.util.TectonicRegionType;
 
+/**
+ * Class implementing 'Disaggregation' calculator. Given an earthquake rupture
+ * forecast {@link EqkRupForecastAPI} and a map of ground motion prediction
+ * equations {@link ScalarIntensityMeasureRelationshipAPI}, it disaggregates the
+ * ground motion value at a site corresponding to a given probability of
+ * exceedance in a given time span. The calculator disaggregates in terms of
+ * 
+ * - latitude and longitude of the surface projection of the closest point of
+ * the rupture area
+ * 
+ * - magnitude
+ * 
+ * - epsilon
+ * 
+ * - tectonic region type (active shallow crust, stable tectonic, subduction
+ * interface, subduction intraslab, volcanic)
+ * 
+ * The class provides the method disaggregate() which is responsible for
+ * calculating the 5 dimensional disaggregation matrix. Additional methods are:
+ * 
+ * - getMagnitudePMF(): returns the 1D marginal probability mass function (PMF)
+ * for magnitude
+ * 
+ * - getDistancePMF(): returns the 1D marginal probability mass function (PMF)
+ * for distance (where distance is the closest distance to the surface
+ * projection of the rupture area)
+ * 
+ * -getTectonicRegionTypePMF(): returns the 1D marginal probability mass
+ * function (PMF) for tectonic region type
+ * 
+ * - getMagnitudeDistancePMF(): returns the 2d marginal probability mass
+ * function (PMF) for magnitude and distance (again closest distance to the
+ * surface projection of the rupture area)
+ * 
+ * - getMagnitudeDistanceEpsilonPMF(): returns the 3d marginal probability mass
+ * function (PMF) for magnitude, distance, epsilon.
+ * 
+ * - getLatitudeLongitudePMF(): return the 2d marginal probability mass function
+ * (PMF) for latitude and longitude
+ * 
+ * - getMagnitudeTectonicRegionTypePMF(): return the 2d marginal probability
+ * mass function (PMF) for magnitude and tectonic region type
+ * 
+ * @author damianomonelli
+ * 
+ */
 public class DisaggregationCalculator {
 
+	private double[] latBinEdges;
+	private double[] lonBinEdges;
 	private double[] magBinEdges;
-	private double[] distBinEdges;
 	private double[] epsilonBinEdges;
+	private double[] distanceBinEdges;
+	private String[] tectonicRegionTypes;
+	private double[][][][][] disaggregationMatrix;
 
 	/**
-	 * The constructor accepts a list of magnitude, distance and epsilon values.
-	 * Values are assumed to represent bin centers for computing the conditional
-	 * probability distribution of M, R, and epsilon. M, R, and epsilon are
-	 * assumed to be equally spaced.
-	 * TODO: change to accept bin edges (more flexible)
+	 * The constructor accepts a list of latitudes, longitudes, magnitude, and
+	 * epsilon values. The list of values are assumed to represent bin edges, to
+	 * be used to compute the disaggregation matrix. Tectonic region types are
+	 * initialized from the values in {@link TectonicRegionType}.
 	 */
-	public DisaggregationCalculator(double[] mag, double[] dist,
-			double[] epsilon) {
-		// TODO: check that values are equally spaced
-		this.magBinEdges = new double[mag.length + 1];
-		this.distBinEdges = new double[dist.length + 1];
-		this.epsilonBinEdges = new double[epsilon.length + 1];
-		setBinEdges(mag, this.magBinEdges);
-		setBinEdges(dist, this.distBinEdges);
-		setBinEdges(epsilon, this.epsilonBinEdges);
-	}
-
-	// compute bin edges from bin center values
-	private void setBinEdges(double[] val, double[] binEdges) {
-		double deltaMag = val[1] - val[0];
-		for (int i = 0; i < binEdges.length - 1; i++) {
-			binEdges[i] = val[i] - deltaMag / 2;
-			binEdges[i + 1] = val[i] + deltaMag / 2;
-		}
+	public DisaggregationCalculator(double[] latBinEdges, double[] lonBinEdges,
+			double[] magBinEdges, double[] epsilonBinEdges,
+			double[] distanceBinEdges) {
+		this.latBinEdges = latBinEdges;
+		this.lonBinEdges = lonBinEdges;
+		this.magBinEdges = magBinEdges;
+		this.epsilonBinEdges = epsilonBinEdges;
+		this.distanceBinEdges = distanceBinEdges;
+		this.tectonicRegionTypes = new String[] {
+				TectonicRegionType.ACTIVE_SHALLOW.toString(),
+				TectonicRegionType.STABLE_SHALLOW.toString(),
+				TectonicRegionType.SUBDUCTION_INTERFACE.toString(),
+				TectonicRegionType.SUBDUCTION_SLAB.toString(),
+				TectonicRegionType.VOLCANIC.toString() };
+		this.disaggregationMatrix = new double[latBinEdges.length - 1][lonBinEdges.length - 1][magBinEdges.length - 1][epsilonBinEdges.length - 1][tectonicRegionTypes.length];
 	}
 
 	/**
-	 * Disaggregates an intensity measure level (iml, input as ln(iml) when
-	 * using a GMPE or simply iml when using an IPE) in a given geographical
-	 * location (site) in terms of magnitude, distance, epsilon. The earthquake
-	 * rupture forecast is assumed to be Poissonian. Distance is the closest
-	 * distance to the rupture.
+	 * Disaggregates the intensity measure level corresponding to a given
+	 * probability of exceedance in a given geographical location (site) in
+	 * terms of latitude, longitude, magnitude, epsilon, and tectonic region
+	 * type. The earthquake rupture forecast is assumed to be Poissonian.
+	 * 
+	 * @throws RemoteException
 	 */
-	public double[][][] getMagDistEpsilonDisaggregation(
-			double iml,
+	public void disaggregate(
+			double probExceed,
 			Site site,
 			EqkRupForecastAPI erf,
-			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap) {
+			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
+			List<Double> imlVals) throws RemoteException {
 
-		// ensurePoissonian(erf);
+		// ensure that the ERF contains only Poissonian sources
+		ensurePoissonian(erf);
 
-		// TODO: make sure that non-zero standard deviation is set in imr
+		// TODO: make sure that non-zero standard deviation is set in imr. If it
+		// is set to zero, then the imr.getEpsilon() method returns infinity.
 
-		DistanceRupParameter distRup = new DistanceRupParameter();
+		// compute ground motion value corresponding to given probExceed
+		double groundMotionValue = computeGroundMotionValue(probExceed, site,
+				erf, imrMap, imlVals);
 
-		double[][][] conditionalPMF = new double[magBinEdges.length - 1][distBinEdges.length - 1][epsilonBinEdges.length - 1];
-		for (int i = 0; i < magBinEdges.length - 1; i++) {
-			for (int j = 0; j < distBinEdges.length - 1; j++) {
-				for (int k = 0; k < epsilonBinEdges.length - 1; k++) {
-					conditionalPMF[i][j][k] = 0.0;
+		// initialize disaggregation matrix
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							disaggregationMatrix[i][j][k][l][m] = 0.0;
+						}
+					}
 				}
 			}
 		}
@@ -75,7 +138,8 @@ public class DisaggregationCalculator {
 		// loop over sources. For each source, loop over ruptures. For each
 		// rupture, compute the mean annual rate of exceedance (the specified
 		// iml), and accumulate it in the corresponding
-		// magnitude-distance-epsilon bin.
+		// latitude-longitude-magnitude-epsilon-tectonic region type
+		// bin.
 		// The mean annual rate of exceedance is computed as:
 		// annualRate = -Math.log(1.0 - probExceedance)
 		// where probExceedance is the probability of exceedance (of the
@@ -94,7 +158,7 @@ public class DisaggregationCalculator {
 			ScalarIntensityMeasureRelationshipAPI imr = imrMap.get(src
 					.getTectonicRegionType());
 			imr.setSite(site);
-			imr.setIntensityMeasureLevel(iml);
+			imr.setIntensityMeasureLevel(groundMotionValue);
 
 			// loop over ruptures
 			for (int j = 0; j < src.getNumRuptures(); j++) {
@@ -102,18 +166,29 @@ public class DisaggregationCalculator {
 				ProbEqkRupture rup = src.getRupture(j);
 				imr.setEqkRupture(rup);
 
-				// if magnitude, distance and epsilon are outside of the
-				// considered range do not include in the conditional
-				// probability calculation
+				// find closest point in the rupture area
+				Location closestLoc = getClosestLocation(site, rup);
+
+				double lat = closestLoc.getLatitude();
+				double lon = closestLoc.getLongitude();
 				double magnitude = rup.getMag();
-				double distance = (Double) distRup.getValue(rup, site);
 				double epsilon = imr.getEpsilon();
-				if (magnitude < magBinEdges[0]
-						|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
+				String tectonicRegionType = src.getTectonicRegionType().toString();
+
+				// if one of the parameters (latitude, longitude, magnitude,
+				// epsilon) is outside of
+				// the considered range do not include in the conditional
+				// probability calculation, that is skip the rupture
+				if (lat < latBinEdges[0]
+						|| lat >= latBinEdges[latBinEdges.length - 1]) {
 					continue;
 				}
-				if (distance < distBinEdges[0]
-						|| distance >= distBinEdges[distBinEdges.length - 1]) {
+				if (lon < lonBinEdges[0]
+						|| lon >= lonBinEdges[lonBinEdges.length - 1]) {
+					continue;
+				}
+				if (magnitude < magBinEdges[0]
+						|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
 					continue;
 				}
 				if (epsilon < epsilonBinEdges[0]
@@ -121,18 +196,24 @@ public class DisaggregationCalculator {
 					continue;
 				}
 
-				// select magnitude-distance-epsilon bin
+				// select
+				// latitude-longitude-magnitude-tectonic_region_type-epsilon bin
+				int ilat;
+				for (ilat = 0; ilat < latBinEdges.length - 1; ilat++) {
+					if (lat >= latBinEdges[ilat] && lat < latBinEdges[ilat + 1]) {
+						break;
+					}
+				}
+				int ilon;
+				for (ilon = 0; ilon < lonBinEdges.length - 1; ilon++) {
+					if (lon >= lonBinEdges[ilon] && lon < lonBinEdges[ilon + 1]) {
+						break;
+					}
+				}
 				int im;
 				for (im = 0; im < magBinEdges.length - 1; im++) {
 					if (magnitude >= magBinEdges[im]
 							&& magnitude < magBinEdges[im + 1]) {
-						break;
-					}
-				}
-				int id;
-				for (id = 0; id < distBinEdges.length - 1; id++) {
-					if (distance >= distBinEdges[id]
-							&& distance < distBinEdges[id + 1]) {
 						break;
 					}
 				}
@@ -143,11 +224,18 @@ public class DisaggregationCalculator {
 						break;
 					}
 				}
+				int itrt;
+				for (itrt = 0; itrt < tectonicRegionTypes.length; itrt++) {
+					if (tectonicRegionType
+							.equalsIgnoreCase(tectonicRegionTypes[itrt])) {
+						break;
+					}
+				}
 
 				double probExceedance = imr.getExceedProbability();
 				double annualRate = -Math.log(1.0 - probExceedance);
 
-				conditionalPMF[im][id][ie] = conditionalPMF[im][id][ie]
+				disaggregationMatrix[ilat][ilon][im][ie][itrt] = disaggregationMatrix[ilat][ilon][im][ie][itrt]
 						+ annualRate;
 
 				totalAnnualRate = totalAnnualRate + annualRate;
@@ -155,16 +243,94 @@ public class DisaggregationCalculator {
 		}
 
 		// normalize by total annual rate
-		for (int i = 0; i < magBinEdges.length - 1; i++) {
-			for (int j = 0; j < distBinEdges.length - 1; j++) {
-				for (int k = 0; k < epsilonBinEdges.length - 1; k++) {
-					conditionalPMF[i][j][k] = conditionalPMF[i][j][k]
-							/ totalAnnualRate;
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							disaggregationMatrix[i][j][k][l][m] = disaggregationMatrix[i][j][k][l][m]
+									/ totalAnnualRate;
+						}
+					}
 				}
 			}
 		}
+	}
 
-		return conditionalPMF;
+	public double[] getMagnitudePMF() {
+		
+		double[] magPFM = new double[magBinEdges.length - 1];
+		for(int i=0;i<magPFM.length;i++){
+			magPFM[i] = 0.0;
+		}
+		
+		for(int i=0;i<magPFM.length;i++){
+			for(int j=0;j<latBinEdges.length - 1;j++){
+				for(int k=0;k<lonBinEdges.length - 1;k++){
+					for(int l=0;l<epsilonBinEdges.length - 1;l++){
+						for(int m=0;m<tectonicRegionTypes.length;m++){
+							magPFM[i] = magPFM[i] + disaggregationMatrix[j][k][i][l][m];
+						}
+					}
+				}
+			}
+		}
+		
+		return magPFM;
+	}
+	
+	public double[] getDistancePMF() {
+		double[] distPFM = new double[distanceBinEdges.length - 1];
+		return distPFM;
+	}
+	
+	public double[] getTectonicRegionTypePMF() {
+		double[] trtPFM = new double[tectonicRegionTypes.length];
+		return trtPFM;
+	}
+
+	private Location getClosestLocation(Site site, ProbEqkRupture rup) {
+		Location closestLoc = null;
+		double closestDistance = Double.MAX_VALUE;
+		for (Location loc : rup.getRuptureSurface().getLocationList()) {
+			double distance = Math
+					.sqrt(Math.pow(
+							LocationUtils.horzDistance(site.getLocation(), loc),
+							2)
+							+ Math.pow(
+									LocationUtils.vertDistance(
+											site.getLocation(), loc), 2));
+			if (distance < closestDistance) {
+				closestDistance = distance;
+				closestLoc = loc;
+			}
+		}
+		return closestLoc;
+	}
+
+	public double computeGroundMotionValue(
+			double probExceed,
+			Site site,
+			EqkRupForecastAPI erf,
+			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
+			List<Double> imlVals) throws RemoteException {
+		double groundMotionValue;
+		DiscretizedFuncAPI hazardCurve = new ArbitrarilyDiscretizedFunc();
+		for (double val : imlVals)
+			hazardCurve.set(val, 1.0);
+		HazardCurveCalculator hcc = new HazardCurveCalculator();
+		hcc.getHazardCurve(hazardCurve, site, imrMap, erf);
+		// this assumes that the hazard curves values (imlVals) are in ascending
+		// order
+		// TODO: check for this
+		if (probExceed > hazardCurve.getY(0)) {
+			groundMotionValue = hazardCurve.getX(0);
+		} else if (probExceed < hazardCurve.getY(hazardCurve.getNum() - 1)) {
+			groundMotionValue = hazardCurve.getX(hazardCurve.getNum() - 1);
+		} else {
+			groundMotionValue = hazardCurve.getFirstInterpolatedX(probExceed);
+		}
+		return groundMotionValue;
 	}
 
 	/**
