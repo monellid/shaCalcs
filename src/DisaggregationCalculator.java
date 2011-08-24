@@ -12,6 +12,8 @@ import org.opensha.sha.calc.HazardCurveCalculator;
 import org.opensha.sha.earthquake.EqkRupForecastAPI;
 import org.opensha.sha.earthquake.ProbEqkRupture;
 import org.opensha.sha.earthquake.ProbEqkSource;
+import org.opensha.sha.earthquake.rupForecastImpl.GEM1.GEM1ERF;
+import org.opensha.sha.faultSurface.EvenlyGriddedSurfaceAPI;
 import org.opensha.sha.imr.ScalarIntensityMeasureRelationshipAPI;
 import org.opensha.sha.imr.param.PropagationEffectParams.DistanceRupParameter;
 import org.opensha.sha.util.TectonicRegionType;
@@ -106,7 +108,7 @@ public class DisaggregationCalculator {
 	public void disaggregate(
 			double probExceed,
 			Site site,
-			EqkRupForecastAPI erf,
+			GEM1ERF erf,
 			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
 			List<Double> imlVals) throws RemoteException {
 
@@ -135,24 +137,23 @@ public class DisaggregationCalculator {
 
 		double totalAnnualRate = 0.0;
 
-		// loop over sources. For each source, loop over ruptures. For each
-		// rupture, compute the mean annual rate of exceedance (the specified
-		// iml), and accumulate it in the corresponding
-		// latitude-longitude-magnitude-epsilon-tectonic region type
-		// bin.
-		// The mean annual rate of exceedance is computed as:
-		// annualRate = -Math.log(1.0 - probExceedance)
-		// where probExceedance is the probability of exceedance (of the
-		// specified
-		// iml), given the rupture, and site characteristic. The equation comes
-		// from the equation for poissonian probability: P(x>=iml) = 1 - exp(-nu
-		// * T), solved for nu and assuming T = 1.
-		// Finally normalize with the total mean annual rate of exceedance
-		// as given by all the ruptures. The total mean annual rate is obtained
-		// by summing the mean annual rates associated to each rupture.
+		// loop over sources. For each source compute annual rate of ruptures
+		// with magnitude greater then Mmin (lambda(M>Mmin). For each source,
+		// loop over ruptures. For each rupture Rup_i compute probability of
+		// exceeding the given IML (that is P(IML > x, Rup_i)). The annual rate
+		// of events producing an IML > x, with given magnitude, latitude,
+		// longitude, epsilon and tectonic region type, is then computed as:
+		// lambda(IML>x, M=m, LAT=lat, LON=lon, EPSILON=epsilon,
+		// TECTONIC_REGIONTYPE=tectonicRegionType) = lambda(M>Mmin) * P(IML > x,
+		// Rup_i) * P(Rup_i)
 		for (int i = 0; i < erf.getNumSources(); i++) {
 
 			ProbEqkSource src = erf.getSource(i);
+
+			// compute total rate above Mmin
+			double totProb = src.computeTotalProbAbove((Double) (erf
+					.getParameter(GEM1ERF.MIN_MAG_NAME).getValue()));
+			double totRate = -Math.log(1 - totProb);
 
 			// select IMR based on source tectonic region type
 			ScalarIntensityMeasureRelationshipAPI imr = imrMap.get(src
@@ -167,13 +168,14 @@ public class DisaggregationCalculator {
 				imr.setEqkRupture(rup);
 
 				// find closest point in the rupture area
-				Location closestLoc = getClosestLocation(site, rup);
+				Location closestLoc = getClosestLocation(site, rup.getRuptureSurface());
 
 				double lat = closestLoc.getLatitude();
 				double lon = closestLoc.getLongitude();
 				double magnitude = rup.getMag();
 				double epsilon = imr.getEpsilon();
-				String tectonicRegionType = src.getTectonicRegionType().toString();
+				String tectonicRegionType = src.getTectonicRegionType()
+						.toString();
 
 				// if one of the parameters (latitude, longitude, magnitude,
 				// epsilon) is outside of
@@ -181,22 +183,18 @@ public class DisaggregationCalculator {
 				// probability calculation, that is skip the rupture
 				if (lat < latBinEdges[0]
 						|| lat >= latBinEdges[latBinEdges.length - 1]) {
-					System.out.println("skipping lat");
 					continue;
 				}
 				if (lon < lonBinEdges[0]
 						|| lon >= lonBinEdges[lonBinEdges.length - 1]) {
-					System.out.println("skipping lon");
 					continue;
 				}
 				if (magnitude < magBinEdges[0]
 						|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
-					System.out.println("skipping magnitude");
 					continue;
 				}
 				if (epsilon < epsilonBinEdges[0]
 						|| epsilon >= epsilonBinEdges[epsilonBinEdges.length - 1]) {
-					System.out.println("skipping epsilon: "+epsilon+", for magnitude: "+magnitude);
 					continue;
 				}
 
@@ -235,15 +233,16 @@ public class DisaggregationCalculator {
 						break;
 					}
 				}
-				
-				double probExceedance = imr.getExceedProbability();
-				double annualRate = -Math.log(1.0 - probExceedance);
+
+				double annualRate = totRate * imr.getExceedProbability()
+						* rup.getProbability();
 
 				disaggregationMatrix[ilat][ilon][im][ie][itrt] = disaggregationMatrix[ilat][ilon][im][ie][itrt]
 						+ annualRate;
 
 				totalAnnualRate = totalAnnualRate + annualRate;
 			}
+
 		}
 
 		// normalize by total annual rate
@@ -262,41 +261,42 @@ public class DisaggregationCalculator {
 	}
 
 	public double[] getMagnitudePMF() {
-		
+
 		double[] magPFM = new double[magBinEdges.length - 1];
-		for(int i=0;i<magPFM.length;i++){
+		for (int i = 0; i < magPFM.length; i++) {
 			magPFM[i] = 0.0;
 		}
-		
-		for(int i=0;i<magPFM.length;i++){
-			for(int j=0;j<latBinEdges.length - 1;j++){
-				for(int k=0;k<lonBinEdges.length - 1;k++){
-					for(int l=0;l<epsilonBinEdges.length - 1;l++){
-						for(int m=0;m<tectonicRegionTypes.length;m++){
-							magPFM[i] = magPFM[i] + disaggregationMatrix[j][k][i][l][m];
+
+		for (int i = 0; i < magPFM.length; i++) {
+			for (int j = 0; j < latBinEdges.length - 1; j++) {
+				for (int k = 0; k < lonBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							magPFM[i] = magPFM[i]
+									+ disaggregationMatrix[j][k][i][l][m];
 						}
 					}
 				}
 			}
 		}
-		
+
 		return magPFM;
 	}
-	
+
 	public double[] getDistancePMF() {
 		double[] distPFM = new double[distanceBinEdges.length - 1];
 		return distPFM;
 	}
-	
+
 	public double[] getTectonicRegionTypePMF() {
 		double[] trtPFM = new double[tectonicRegionTypes.length];
 		return trtPFM;
 	}
 
-	private Location getClosestLocation(Site site, ProbEqkRupture rup) {
+	public Location getClosestLocation(Site site, EvenlyGriddedSurfaceAPI rupSurf) {
 		Location closestLoc = null;
 		double closestDistance = Double.MAX_VALUE;
-		for (Location loc : rup.getRuptureSurface().getLocationList()) {
+		for (Location loc : rupSurf.getLocationList()) {
 			double distance = Math
 					.sqrt(Math.pow(
 							LocationUtils.horzDistance(site.getLocation(), loc),

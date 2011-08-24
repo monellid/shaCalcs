@@ -1,3 +1,5 @@
+import static org.junit.Assert.*;
+
 import java.rmi.RemoteException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,7 +46,7 @@ public class DisaggregationCalculatorTest {
 	private double[] distanceBinEdges;
 	private double probExceed;
 	private Site site;
-	private EqkRupForecastAPI erf;
+	private GEM1ERF erf;
 	private Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap;
 	private List<Double> imlVals;
 	private DisaggregationCalculator disCalc;
@@ -54,8 +56,8 @@ public class DisaggregationCalculatorTest {
 		latBinEdges = new double[] { -0.6, -0.4, -0.2, -0.0, 0.2, 0.4, 0.6 };
 		lonBinEdges = new double[] { -0.6, -0.4, -0.2, -0.0, 0.2, 0.4, 0.6 };
 		magBinEdges = new double[] { 5.0, 6.0, 7.0, 8.0, 9.0 };
-		epsilonBinEdges = new double[] {-6.5, -5.5, -4.5, -3.5, -2.5, -1.5, -0.5, +0.5, +1.5,
-				+2.5, +3.5, +4.5, +5.5, +6.5 };
+		epsilonBinEdges = new double[] { -6.5, -5.5, -4.5, -3.5, -2.5, -1.5,
+				-0.5, +0.5, +1.5, +2.5, +3.5, +4.5, +5.5, +6.5 };
 		distanceBinEdges = new double[] { 60, 40, 20, 0 };
 		probExceed = 0.1;
 		site = new Site(new Location(0.0, 0.0));
@@ -88,7 +90,7 @@ public class DisaggregationCalculatorTest {
 		double[] computedMagPMF = disCalc.getMagnitudePMF();
 
 		Random rn = new Random(123456789);
-		int n = 1000;
+		int n = 10000;
 
 		// generate n stochastic event sets
 		ArrayList<EqkRupture> ses = new ArrayList<EqkRupture>();
@@ -129,6 +131,44 @@ public class DisaggregationCalculatorTest {
 
 			for (EqkRupture rup : ses) {
 
+				// check if the rupture is inside the ranges considered
+				// find closest point in the rupture area
+				Location closestLoc = disCalc.getClosestLocation(site,
+						rup.getRuptureSurface());
+
+				ScalarIntensityMeasureRelationshipAPI imr = imrMap.get(rup
+						.getTectRegType());
+				imr.setSite(site);
+				imr.setEqkRupture(rup);
+				imr.setIntensityMeasureLevel(groundMotionValue);
+
+				double lat = closestLoc.getLatitude();
+				double lon = closestLoc.getLongitude();
+				double magnitude = rup.getMag();
+				double epsilon = imr.getEpsilon();
+				String tectonicRegionType = rup.getTectRegType().toString();
+
+				// if one of the parameters (latitude, longitude, magnitude,
+				// epsilon) is outside of
+				// the considered range do not include in the conditional
+				// probability calculation, that is skip the rupture
+				if (lat < latBinEdges[0]
+						|| lat >= latBinEdges[latBinEdges.length - 1]) {
+					continue;
+				}
+				if (lon < lonBinEdges[0]
+						|| lon >= lonBinEdges[lonBinEdges.length - 1]) {
+					continue;
+				}
+				if (magnitude < magBinEdges[0]
+						|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
+					continue;
+				}
+				if (epsilon < epsilonBinEdges[0]
+						|| epsilon >= epsilonBinEdges[epsilonBinEdges.length - 1]) {
+					continue;
+				}
+
 				// compute ground motion field
 				ScalarIntensityMeasureRelationshipAPI attenRel = imrMap.get(rup
 						.getTectRegType());
@@ -137,11 +177,11 @@ public class DisaggregationCalculatorTest {
 				Map<Site, Double> gmf = gmfCalc
 						.getUncorrelatedGroundMotionField(rn);
 				double gmfv = gmf.get(site);
-				
+
 				// check of the value is greater than the value of interest
-				if(gmfv > groundMotionValue){
+				if (gmfv > groundMotionValue) {
 					numRupture = numRupture + 1;
-					
+
 					double mag = rup.getMag();
 					if (mag >= magBinEdges[i] && mag < magBinEdges[i + 1]) {
 						numRuptureWithGivenM = numRuptureWithGivenM + 1;
@@ -157,6 +197,7 @@ public class DisaggregationCalculatorTest {
 			System.out.println("mag: " + (magBinEdges[i] + magBinEdges[i + 1])
 					/ 2 + ", computed: " + computedMagPMF[i] + ", expected: "
 					+ expectedMagPMF[i]);
+			assertEquals(computedMagPMF[i], expectedMagPMF[i], 0.1);
 		}
 
 	}
@@ -199,7 +240,7 @@ public class DisaggregationCalculatorTest {
 		return imr;
 	}
 
-	private EqkRupForecastAPI getTestERF() {
+	private GEM1ERF getTestERF() {
 
 		ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
 		srcList.add(getTestSourceData());
