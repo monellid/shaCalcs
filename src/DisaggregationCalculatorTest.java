@@ -44,12 +44,17 @@ public class DisaggregationCalculatorTest {
 	private double[] magBinEdges;
 	private double[] epsilonBinEdges;
 	private double[] distanceBinEdges;
-	private double probExceed;
+	private double probExceed = 0.1;
 	private Site site;
 	private GEM1ERF erf;
 	private Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap;
 	private List<Double> imlVals;
 	private DisaggregationCalculator disCalc;
+
+	private static Random rn = new Random(123456789);
+	private static int n = 2000;
+	private ArrayList<EqkRupture> ses;
+	private double groundMotionValue;
 
 	@Before
 	public void setUp() {
@@ -59,17 +64,34 @@ public class DisaggregationCalculatorTest {
 		epsilonBinEdges = new double[] { -6.5, -5.5, -4.5, -3.5, -2.5, -1.5,
 				-0.5, +0.5, +1.5, +2.5, +3.5, +4.5, +5.5, +6.5 };
 		distanceBinEdges = new double[] { 60, 40, 20, 0 };
-		probExceed = 0.1;
 		site = new Site(new Location(0.0, 0.0));
 		site.addParameter(new DoubleParameter(Vs30_Param.NAME, 760.0));
 		erf = getTestERF();
 		imrMap = new HashMap<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI>();
 		imrMap.put(TectonicRegionType.ACTIVE_SHALLOW, getTestIMR());
 		imlVals = getTestImlVals();
+
+		// compute disaggregation matrix
 		disCalc = new DisaggregationCalculator(latBinEdges, lonBinEdges,
 				magBinEdges, epsilonBinEdges, distanceBinEdges);
 		try {
 			disCalc.disaggregate(probExceed, site, erf, imrMap, imlVals);
+		} catch (Exception e) {
+			throw new RuntimeException(e.toString());
+		}
+		ses = new ArrayList<EqkRupture>();
+
+		// generate n stochastic event sets
+		for (int i = 0; i < n; i++) {
+			ses.addAll(StochasticEventSetGenerator
+					.getStochasticEventSetFromPoissonianERF(erf, rn));
+		}
+
+		// compute the ground motion value for which the disaggregation is
+		// computed.
+		try {
+			groundMotionValue = disCalc.computeGroundMotionValue(probExceed,
+					site, erf, imrMap, imlVals);
 		} catch (Exception e) {
 			throw new RuntimeException(e.toString());
 		}
@@ -87,44 +109,40 @@ public class DisaggregationCalculatorTest {
 	 */
 	@Test
 	public void getMagnitudePMFTest() {
+
+		// computed mag PMF
 		double[] computedMagPMF = disCalc.getMagnitudePMF();
 
-		Random rn = new Random(123456789);
-		int n = 10000;
+		double[] expectedMagPMF = compute1DPMFThroughMonteCarlo("magnitude",
+				magBinEdges);
 
-		// generate n stochastic event sets
-		ArrayList<EqkRupture> ses = new ArrayList<EqkRupture>();
-		for (int i = 0; i < n; i++) {
-			ses.addAll(StochasticEventSetGenerator
-					.getStochasticEventSetFromPoissonianERF(erf, rn));
+		for (int i = 0; i < computedMagPMF.length; i++) {
+			System.out.println("mag: " + (magBinEdges[i] + magBinEdges[i + 1])
+					/ 2 + ", computed: " + computedMagPMF[i] + ", expected: "
+					+ expectedMagPMF[i]);
+			assertEquals(computedMagPMF[i], expectedMagPMF[i], 0.1);
 		}
 
-		// compute the ground motion value for which the disaggregation is
-		// computed.
-		double groundMotionValue;
-		try {
-			groundMotionValue = disCalc.computeGroundMotionValue(probExceed,
-					site, erf, imrMap, imlVals);
-		} catch (Exception e) {
-			throw new RuntimeException(e.toString());
-		}
+	}
 
-		// for each magnitude bin, compute:
-		// P(M=m | IML >x) = lambda(IML > x, M =m) / lambda (IML > x)
-		// loop over ruptures. For each rupture, compute ground motion field
-		// realization in the site of interest. Then check if the simulated
-		// ground motion field gives a value greater than the ground motion
-		// value corresponding to the probability of interest.
-		// lambda(IML > x, M =m) is given by the number of ruptures with
-		// magnitude inside the considered magnitude bin, and that produce a
-		// ground motion value greater then the ground motion value of interest.
-		// lambda (IML > x) is the number of ruptures which produce a ground
-		// motion value greater than the one of interest (indipendently of the
-		// magnitude)
-		double[] expectedMagPMF = new double[computedMagPMF.length];
+	// for each magnitude bin, compute:
+	// P(M=m | IML >x) = lambda(IML > x, M =m) / lambda (IML > x)
+	// loop over ruptures. For each rupture, compute ground motion field
+	// realization in the site of interest. Then check if the simulated
+	// ground motion field gives a value greater than the ground motion
+	// value corresponding to the probability of interest.
+	// lambda(IML > x, M =m) is given by the number of ruptures with
+	// magnitude inside the considered magnitude bin, and that produce a
+	// ground motion value greater then the ground motion value of interest.
+	// lambda (IML > x) is the number of ruptures which produce a ground
+	// motion value greater than the one of interest (indipendently of the
+	// magnitude)
+	private double[] compute1DPMFThroughMonteCarlo(String paramName,
+			double[] paramBinEdges) {
+		double[] pmf = new double[paramBinEdges.length - 1];
 		List<Site> sites = new ArrayList<Site>();
 		sites.add(site);
-		for (int i = 0; i < expectedMagPMF.length; i++) {
+		for (int i = 0; i < pmf.length; i++) {
 
 			double numRuptureWithGivenM = 0.0;
 			double numRupture = 0.0;
@@ -178,28 +196,28 @@ public class DisaggregationCalculatorTest {
 						.getUncorrelatedGroundMotionField(rn);
 				double gmfv = gmf.get(site);
 
-				// check of the value is greater than the value of interest
+				// check that the value is greater than the value of interest
 				if (gmfv > groundMotionValue) {
 					numRupture = numRupture + 1;
 
-					double mag = rup.getMag();
-					if (mag >= magBinEdges[i] && mag < magBinEdges[i + 1]) {
+					double param;
+					if (paramName.equalsIgnoreCase("magnitude")) {
+						param = magnitude;
+					} else {
+						throw new RuntimeException(
+								"parameter name not recognized!!");
+					}
+					if (param >= paramBinEdges[i]
+							&& param < paramBinEdges[i + 1]) {
 						numRuptureWithGivenM = numRuptureWithGivenM + 1;
 					}
 				}
 			}
 
 			double expectedProbability = numRuptureWithGivenM / numRupture;
-			expectedMagPMF[i] = expectedProbability;
+			pmf[i] = expectedProbability;
 		}
-
-		for (int i = 0; i < computedMagPMF.length; i++) {
-			System.out.println("mag: " + (magBinEdges[i] + magBinEdges[i + 1])
-					/ 2 + ", computed: " + computedMagPMF[i] + ", expected: "
-					+ expectedMagPMF[i]);
-			assertEquals(computedMagPMF[i], expectedMagPMF[i], 0.1);
-		}
-
+		return pmf;
 	}
 
 	private List<Double> getTestImlVals() {
