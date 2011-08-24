@@ -15,6 +15,7 @@ import org.opensha.commons.data.function.ArbitrarilyDiscretizedFunc;
 import org.opensha.commons.geo.BorderType;
 import org.opensha.commons.geo.Location;
 import org.opensha.commons.geo.LocationList;
+import org.opensha.commons.geo.LocationUtils;
 import org.opensha.commons.geo.Region;
 import org.opensha.commons.param.DoubleParameter;
 import org.opensha.sha.earthquake.EqkRupForecastAPI;
@@ -52,7 +53,7 @@ public class DisaggregationCalculatorTest {
 	private DisaggregationCalculator disCalc;
 
 	private static Random rn = new Random(123456789);
-	private static int n = 2000;
+	private static int n = 10000;
 	private ArrayList<EqkRupture> ses;
 	private double groundMotionValue;
 
@@ -63,7 +64,7 @@ public class DisaggregationCalculatorTest {
 		magBinEdges = new double[] { 5.0, 6.0, 7.0, 8.0, 9.0 };
 		epsilonBinEdges = new double[] { -6.5, -5.5, -4.5, -3.5, -2.5, -1.5,
 				-0.5, +0.5, +1.5, +2.5, +3.5, +4.5, +5.5, +6.5 };
-		distanceBinEdges = new double[] { 60, 40, 20, 0 };
+		distanceBinEdges = new double[] { 0, 20, 40, 60 };
 		site = new Site(new Location(0.0, 0.0));
 		site.addParameter(new DoubleParameter(Vs30_Param.NAME, 760.0));
 		erf = getTestERF();
@@ -123,6 +124,27 @@ public class DisaggregationCalculatorTest {
 			assertEquals(computedMagPMF[i], expectedMagPMF[i], 0.1);
 		}
 
+	}
+
+	/**
+	 * The distance PMF is checked against the magnitude PMF computed using
+	 * Monte Carlo approach.
+	 */
+	@Test
+	public void getDistancePMFTest() {
+
+		double[] computedDistancePMF = disCalc.getDistancePMF();
+
+		double[] expectedDistancePMF = compute1DPMFThroughMonteCarlo(
+				"distance", distanceBinEdges);
+
+		for (int i = 0; i < computedDistancePMF.length; i++) {
+			System.out.println("distance (km): "
+					+ (distanceBinEdges[i] + distanceBinEdges[i + 1]) / 2
+					+ ", computed: " + computedDistancePMF[i] + ", expected: "
+					+ expectedDistancePMF[i]);
+			assertEquals(computedDistancePMF[i], expectedDistancePMF[i], 0.1);
+		}
 	}
 
 	// for each magnitude bin, compute:
@@ -203,6 +225,9 @@ public class DisaggregationCalculatorTest {
 					double param;
 					if (paramName.equalsIgnoreCase("magnitude")) {
 						param = magnitude;
+					} else if (paramName.equalsIgnoreCase("distance")) {
+						param = LocationUtils.horzDistance(site.getLocation(),
+								new Location(lat, lon));
 					} else {
 						throw new RuntimeException(
 								"parameter name not recognized!!");

@@ -73,6 +73,7 @@ public class DisaggregationCalculator {
 	private double[] distanceBinEdges;
 	private String[] tectonicRegionTypes;
 	private double[][][][][] disaggregationMatrix;
+	private Site site;
 
 	/**
 	 * The constructor accepts a list of latitudes, longitudes, magnitude, and
@@ -111,6 +112,8 @@ public class DisaggregationCalculator {
 			GEM1ERF erf,
 			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
 			List<Double> imlVals) throws RemoteException {
+
+		this.site = site;
 
 		// ensure that the ERF contains only Poissonian sources
 		ensurePoissonian(erf);
@@ -168,7 +171,8 @@ public class DisaggregationCalculator {
 				imr.setEqkRupture(rup);
 
 				// find closest point in the rupture area
-				Location closestLoc = getClosestLocation(site, rup.getRuptureSurface());
+				Location closestLoc = getClosestLocation(site,
+						rup.getRuptureSurface());
 
 				double lat = closestLoc.getLatitude();
 				double lon = closestLoc.getLongitude();
@@ -285,6 +289,39 @@ public class DisaggregationCalculator {
 
 	public double[] getDistancePMF() {
 		double[] distPFM = new double[distanceBinEdges.length - 1];
+		for (int i = 0; i < distPFM.length; i++) {
+			distPFM[i] = 0.0;
+		}
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							double meanLat = (latBinEdges[i] + latBinEdges[i + 1]) / 2;
+							double meanLon = (lonBinEdges[j] + lonBinEdges[j + 1]) / 2;
+							double distance = LocationUtils.horzDistance(site
+									.getLocation(), new Location(meanLat,
+									meanLon));
+							if (distance < distanceBinEdges[0]
+									|| distance > distanceBinEdges[distanceBinEdges.length - 1]) {
+								continue;
+							} else {
+								int ii = 0;
+								for (ii = 0; ii < distanceBinEdges.length - 1; ii++) {
+									if (distance >= distanceBinEdges[ii]
+											&& distance < distanceBinEdges[ii + 1])
+									break;
+								}
+								distPFM[ii] = distPFM[ii]
+										+ disaggregationMatrix[i][j][k][l][m];
+							}
+						}
+					}
+				}
+			}
+		}
+
 		return distPFM;
 	}
 
@@ -293,7 +330,8 @@ public class DisaggregationCalculator {
 		return trtPFM;
 	}
 
-	public Location getClosestLocation(Site site, EvenlyGriddedSurfaceAPI rupSurf) {
+	public Location getClosestLocation(Site site,
+			EvenlyGriddedSurfaceAPI rupSurf) {
 		Location closestLoc = null;
 		double closestDistance = Double.MAX_VALUE;
 		for (Location loc : rupSurf.getLocationList()) {
