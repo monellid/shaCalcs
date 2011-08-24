@@ -181,18 +181,22 @@ public class DisaggregationCalculator {
 				// probability calculation, that is skip the rupture
 				if (lat < latBinEdges[0]
 						|| lat >= latBinEdges[latBinEdges.length - 1]) {
+					System.out.println("skipping lat");
 					continue;
 				}
 				if (lon < lonBinEdges[0]
 						|| lon >= lonBinEdges[lonBinEdges.length - 1]) {
+					System.out.println("skipping lon");
 					continue;
 				}
 				if (magnitude < magBinEdges[0]
 						|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
+					System.out.println("skipping magnitude");
 					continue;
 				}
 				if (epsilon < epsilonBinEdges[0]
 						|| epsilon >= epsilonBinEdges[epsilonBinEdges.length - 1]) {
+					System.out.println("skipping epsilon: "+epsilon+", for magnitude: "+magnitude);
 					continue;
 				}
 
@@ -231,7 +235,7 @@ public class DisaggregationCalculator {
 						break;
 					}
 				}
-
+				
 				double probExceedance = imr.getExceedProbability();
 				double annualRate = -Math.log(1.0 - probExceedance);
 

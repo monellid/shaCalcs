@@ -54,8 +54,8 @@ public class DisaggregationCalculatorTest {
 		latBinEdges = new double[] { -0.6, -0.4, -0.2, -0.0, 0.2, 0.4, 0.6 };
 		lonBinEdges = new double[] { -0.6, -0.4, -0.2, -0.0, 0.2, 0.4, 0.6 };
 		magBinEdges = new double[] { 5.0, 6.0, 7.0, 8.0, 9.0 };
-		epsilonBinEdges = new double[] { -3.5, -2.5, -1.5, -0.5, +0.5, +1.5,
-				+2.5, +3.5 };
+		epsilonBinEdges = new double[] {-6.5, -5.5, -4.5, -3.5, -2.5, -1.5, -0.5, +0.5, +1.5,
+				+2.5, +3.5, +4.5, +5.5, +6.5 };
 		distanceBinEdges = new double[] { 60, 40, 20, 0 };
 		probExceed = 0.1;
 		site = new Site(new Location(0.0, 0.0));
@@ -107,55 +107,56 @@ public class DisaggregationCalculatorTest {
 			throw new RuntimeException(e.toString());
 		}
 
-		// for each magnitude bin, compute P(M=m | IML >x)
+		// for each magnitude bin, compute:
+		// P(M=m | IML >x) = lambda(IML > x, M =m) / lambda (IML > x)
+		// loop over ruptures. For each rupture, compute ground motion field
+		// realization in the site of interest. Then check if the simulated
+		// ground motion field gives a value greater than the ground motion
+		// value corresponding to the probability of interest.
+		// lambda(IML > x, M =m) is given by the number of ruptures with
+		// magnitude inside the considered magnitude bin, and that produce a
+		// ground motion value greater then the ground motion value of interest.
+		// lambda (IML > x) is the number of ruptures which produce a ground
+		// motion value greater than the one of interest (indipendently of the
+		// magnitude)
 		double[] expectedMagPMF = new double[computedMagPMF.length];
-		for (int i = 0; i < computedMagPMF.length; i++) {
+		List<Site> sites = new ArrayList<Site>();
+		sites.add(site);
+		for (int i = 0; i < expectedMagPMF.length; i++) {
 
-			// loop over ruptures. If the rupture magnitude is in the considered
-			// magnitude bin, compute a realization of the ground motion field
-			// in the site of interest. Then check if the simulated ground
-			// motion value is greater than then the ground motion value
-			// corresponding to the probability of exceedence.
+			double numRuptureWithGivenM = 0.0;
 			double numRupture = 0.0;
-			double totNumRupture = 0.0;
-			List<Site> sites = new ArrayList<Site>();
-			sites.add(site);
+
 			for (EqkRupture rup : ses) {
 
-				double mag = rup.getMag();
-
-				if (mag >= magBinEdges[i] && mag < magBinEdges[i + 1]) {
-
-					totNumRupture = totNumRupture + 1;
-
-					ScalarIntensityMeasureRelationshipAPI attenRel = imrMap
-							.get(rup.getTectRegType());
-					GroundMotionFieldCalculator gmfCalc = new GroundMotionFieldCalculator(
-							attenRel, rup, sites);
-					Map<Site, Double> gmf = gmfCalc
-							.getUncorrelatedGroundMotionField(rn);
-					double gmfv = gmf.get(site);
-
-					if (gmfv > groundMotionValue) {
-						numRupture = numRupture + 1;
+				// compute ground motion field
+				ScalarIntensityMeasureRelationshipAPI attenRel = imrMap.get(rup
+						.getTectRegType());
+				GroundMotionFieldCalculator gmfCalc = new GroundMotionFieldCalculator(
+						attenRel, rup, sites);
+				Map<Site, Double> gmf = gmfCalc
+						.getUncorrelatedGroundMotionField(rn);
+				double gmfv = gmf.get(site);
+				
+				// check of the value is greater than the value of interest
+				if(gmfv > groundMotionValue){
+					numRupture = numRupture + 1;
+					
+					double mag = rup.getMag();
+					if (mag >= magBinEdges[i] && mag < magBinEdges[i + 1]) {
+						numRuptureWithGivenM = numRuptureWithGivenM + 1;
 					}
 				}
-
 			}
 
-			double expectedProbability = numRupture / totNumRupture;
+			double expectedProbability = numRuptureWithGivenM / numRupture;
 			expectedMagPMF[i] = expectedProbability;
 		}
-		double totProb = 0;
-		for(int i=0;i<expectedMagPMF.length;i++){
-			totProb = totProb + expectedMagPMF[i];
-		}
-		for(int i=0;i<expectedMagPMF.length;i++){
-			expectedMagPMF[i] = expectedMagPMF[i]/totProb;
-		}
-		
-		for(int i=0;i<computedMagPMF.length;i++){
-			System.out.println("mag: "+(magBinEdges[i]+magBinEdges[i+1])/2+", computed: "+computedMagPMF[i]+", expected: "+expectedMagPMF[i]);
+
+		for (int i = 0; i < computedMagPMF.length; i++) {
+			System.out.println("mag: " + (magBinEdges[i] + magBinEdges[i + 1])
+					/ 2 + ", computed: " + computedMagPMF[i] + ", expected: "
+					+ expectedMagPMF[i]);
 		}
 
 	}
