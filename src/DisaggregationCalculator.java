@@ -15,7 +15,7 @@ import org.opensha.sha.earthquake.ProbEqkSource;
 import org.opensha.sha.earthquake.rupForecastImpl.GEM1.GEM1ERF;
 import org.opensha.sha.faultSurface.EvenlyGriddedSurfaceAPI;
 import org.opensha.sha.imr.ScalarIntensityMeasureRelationshipAPI;
-import org.opensha.sha.imr.param.PropagationEffectParams.DistanceRupParameter;
+import org.opensha.sha.imr.param.OtherParams.StdDevTypeParam;
 import org.opensha.sha.util.TectonicRegionType;
 
 /**
@@ -111,32 +111,34 @@ public class DisaggregationCalculator {
 			Site site,
 			GEM1ERF erf,
 			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
-			List<Double> imlVals) throws RemoteException {
+			List<Double> imlVals) {
 
 		this.site = site;
 
 		// ensure that the ERF contains only Poissonian sources
 		ensurePoissonian(erf);
 
-		// TODO: make sure that non-zero standard deviation is set in imr. If it
+		// make sure that non-zero standard deviation is set in imr. If it
 		// is set to zero, then the imr.getEpsilon() method returns infinity.
-
-		// compute ground motion value corresponding to given probExceed
-		double groundMotionValue = computeGroundMotionValue(probExceed, site,
-				erf, imrMap, imlVals);
-
-		// initialize disaggregation matrix
-		for (int i = 0; i < latBinEdges.length - 1; i++) {
-			for (int j = 0; j < lonBinEdges.length - 1; j++) {
-				for (int k = 0; k < magBinEdges.length - 1; k++) {
-					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
-						for (int m = 0; m < tectonicRegionTypes.length; m++) {
-							disaggregationMatrix[i][j][k][l][m] = 0.0;
-						}
-					}
-				}
+		for (ScalarIntensityMeasureRelationshipAPI imr : imrMap.values()) {
+			String stdDevType = (String) imr.getParameter(StdDevTypeParam.NAME)
+					.getValue();
+			if (stdDevType.equalsIgnoreCase(StdDevTypeParam.STD_DEV_TYPE_NONE)) {
+				throw new RuntimeException(
+						"Attenuation relationship must have a non-zero standard deviation");
 			}
 		}
+
+		// compute ground motion value corresponding to given probExceed
+		double groundMotionValue;
+		try {
+			groundMotionValue = DisaggregationUtils.computeGroundMotionValue(
+					probExceed, site, erf, imrMap, imlVals);
+		} catch (Exception e) {
+			throw new RuntimeException(e.toString());
+		}
+
+		initializeDisaggregationMatrix();
 
 		double totalAnnualRate = 0.0;
 
@@ -171,9 +173,10 @@ public class DisaggregationCalculator {
 				imr.setEqkRupture(rup);
 
 				// find closest point in the rupture area
-				Location closestLoc = getClosestLocation(site,
-						rup.getRuptureSurface());
+				Location closestLoc = DisaggregationUtils.getClosestLocation(
+						site, rup.getRuptureSurface());
 
+				// get rupture parameters
 				double lat = closestLoc.getLatitude();
 				double lon = closestLoc.getLongitude();
 				double magnitude = rup.getMag();
@@ -185,71 +188,34 @@ public class DisaggregationCalculator {
 				// epsilon) is outside of
 				// the considered range do not include in the conditional
 				// probability calculation, that is skip the rupture
-				if (lat < latBinEdges[0]
-						|| lat >= latBinEdges[latBinEdges.length - 1]) {
-					continue;
-				}
-				if (lon < lonBinEdges[0]
-						|| lon >= lonBinEdges[lonBinEdges.length - 1]) {
-					continue;
-				}
-				if (magnitude < magBinEdges[0]
-						|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
-					continue;
-				}
-				if (epsilon < epsilonBinEdges[0]
-						|| epsilon >= epsilonBinEdges[epsilonBinEdges.length - 1]) {
+				if (!isInsideRange(lat, lon, magnitude, epsilon)) {
 					continue;
 				}
 
 				// select
 				// latitude-longitude-magnitude-tectonic_region_type-epsilon bin
-				int ilat;
-				for (ilat = 0; ilat < latBinEdges.length - 1; ilat++) {
-					if (lat >= latBinEdges[ilat] && lat < latBinEdges[ilat + 1]) {
-						break;
-					}
-				}
-				int ilon;
-				for (ilon = 0; ilon < lonBinEdges.length - 1; ilon++) {
-					if (lon >= lonBinEdges[ilon] && lon < lonBinEdges[ilon + 1]) {
-						break;
-					}
-				}
-				int im;
-				for (im = 0; im < magBinEdges.length - 1; im++) {
-					if (magnitude >= magBinEdges[im]
-							&& magnitude < magBinEdges[im + 1]) {
-						break;
-					}
-				}
-				int ie;
-				for (ie = 0; ie < epsilonBinEdges.length - 1; ie++) {
-					if (epsilon >= epsilonBinEdges[ie]
-							&& epsilon < epsilonBinEdges[ie + 1]) {
-						break;
-					}
-				}
-				int itrt;
-				for (itrt = 0; itrt < tectonicRegionTypes.length; itrt++) {
-					if (tectonicRegionType
-							.equalsIgnoreCase(tectonicRegionTypes[itrt])) {
-						break;
-					}
-				}
+				int[] binIndex = getBinIndex(lat, lon, magnitude, epsilon,
+						tectonicRegionType);
 
+				// compute annual rate of events exceeding the given iml
 				double annualRate = totRate * imr.getExceedProbability()
 						* rup.getProbability();
 
-				disaggregationMatrix[ilat][ilon][im][ie][itrt] = disaggregationMatrix[ilat][ilon][im][ie][itrt]
+				// update disaggregation matrix
+				disaggregationMatrix[binIndex[0]][binIndex[1]][binIndex[2]][binIndex[3]][binIndex[4]] = disaggregationMatrix[binIndex[0]][binIndex[1]][binIndex[2]][binIndex[3]][binIndex[4]]
 						+ annualRate;
 
+				// sum rates to get total annual rate
 				totalAnnualRate = totalAnnualRate + annualRate;
 			}
 
 		}
 
 		// normalize by total annual rate
+		normalizaDisaggregationMatrix(totalAnnualRate);
+	}
+
+	private void normalizaDisaggregationMatrix(double totalAnnualRate) {
 		for (int i = 0; i < latBinEdges.length - 1; i++) {
 			for (int j = 0; j < lonBinEdges.length - 1; j++) {
 				for (int k = 0; k < magBinEdges.length - 1; k++) {
@@ -262,6 +228,77 @@ public class DisaggregationCalculator {
 				}
 			}
 		}
+	}
+
+	private void initializeDisaggregationMatrix() {
+		// initialize disaggregation matrix
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							disaggregationMatrix[i][j][k][l][m] = 0.0;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private boolean isInsideRange(double lat, double lon, double magnitude,
+			double epsilon) {
+		if (lat < latBinEdges[0] || lat >= latBinEdges[latBinEdges.length - 1]) {
+			return false;
+		}
+		if (lon < lonBinEdges[0] || lon >= lonBinEdges[lonBinEdges.length - 1]) {
+			return false;
+		}
+		if (magnitude < magBinEdges[0]
+				|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
+			return false;
+		}
+		if (epsilon < epsilonBinEdges[0]
+				|| epsilon >= epsilonBinEdges[epsilonBinEdges.length - 1]) {
+			return false;
+		}
+		return true;
+	}
+
+	private int[] getBinIndex(double lat, double lon, double magnitude,
+			double epsilon, String tectonicRegionType) {
+		int ilat;
+		for (ilat = 0; ilat < latBinEdges.length - 1; ilat++) {
+			if (lat >= latBinEdges[ilat] && lat < latBinEdges[ilat + 1]) {
+				break;
+			}
+		}
+		int ilon;
+		for (ilon = 0; ilon < lonBinEdges.length - 1; ilon++) {
+			if (lon >= lonBinEdges[ilon] && lon < lonBinEdges[ilon + 1]) {
+				break;
+			}
+		}
+		int im;
+		for (im = 0; im < magBinEdges.length - 1; im++) {
+			if (magnitude >= magBinEdges[im] && magnitude < magBinEdges[im + 1]) {
+				break;
+			}
+		}
+		int ie;
+		for (ie = 0; ie < epsilonBinEdges.length - 1; ie++) {
+			if (epsilon >= epsilonBinEdges[ie]
+					&& epsilon < epsilonBinEdges[ie + 1]) {
+				break;
+			}
+		}
+		int itrt;
+		for (itrt = 0; itrt < tectonicRegionTypes.length; itrt++) {
+			if (tectonicRegionType.equalsIgnoreCase(tectonicRegionTypes[itrt])) {
+				break;
+			}
+		}
+
+		return new int[] { ilat, ilon, im, ie, itrt };
 	}
 
 	public double[] getMagnitudePMF() {
@@ -311,7 +348,7 @@ public class DisaggregationCalculator {
 								for (ii = 0; ii < distanceBinEdges.length - 1; ii++) {
 									if (distance >= distanceBinEdges[ii]
 											&& distance < distanceBinEdges[ii + 1])
-									break;
+										break;
 								}
 								distPFM[ii] = distPFM[ii]
 										+ disaggregationMatrix[i][j][k][l][m];

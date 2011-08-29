@@ -53,9 +53,9 @@ public class DisaggregationCalculatorTest {
 	private DisaggregationCalculator disCalc;
 
 	private static Random rn = new Random(123456789);
-	private static int n = 10000;
-	private ArrayList<EqkRupture> ses;
-	private double groundMotionValue;
+	private static int n = 3000;
+	private DisaggregationCalculatorMC disCalcMC;
+
 
 	@Before
 	public void setUp() {
@@ -72,35 +72,21 @@ public class DisaggregationCalculatorTest {
 		imrMap.put(TectonicRegionType.ACTIVE_SHALLOW, getTestIMR());
 		imlVals = getTestImlVals();
 
-		// compute disaggregation matrix
+		// compute disaggregation matrix following classical approach
 		disCalc = new DisaggregationCalculator(latBinEdges, lonBinEdges,
 				magBinEdges, epsilonBinEdges, distanceBinEdges);
-		try {
-			disCalc.disaggregate(probExceed, site, erf, imrMap, imlVals);
-		} catch (Exception e) {
-			throw new RuntimeException(e.toString());
-		}
-		ses = new ArrayList<EqkRupture>();
+		disCalc.disaggregate(probExceed, site, erf, imrMap, imlVals);
 
-		// generate n stochastic event sets
-		for (int i = 0; i < n; i++) {
-			ses.addAll(StochasticEventSetGenerator
-					.getStochasticEventSetFromPoissonianERF(erf, rn));
-		}
-
-		// compute the ground motion value for which the disaggregation is
-		// computed.
-		try {
-			groundMotionValue = disCalc.computeGroundMotionValue(probExceed,
-					site, erf, imrMap, imlVals);
-		} catch (Exception e) {
-			throw new RuntimeException(e.toString());
-		}
+		// compute disaggregation calculator with MC approach
+		disCalcMC = new DisaggregationCalculatorMC(latBinEdges, lonBinEdges,
+				magBinEdges, epsilonBinEdges, distanceBinEdges);
+		disCalcMC.disaggregate(probExceed, site, erf, imrMap, imlVals, rn, n);
 	}
 
 	@After
 	public void tearDown() {
 		disCalc = null;
+		disCalcMC = null;
 	}
 
 	/**
@@ -113,9 +99,8 @@ public class DisaggregationCalculatorTest {
 
 		// computed mag PMF
 		double[] computedMagPMF = disCalc.getMagnitudePMF();
-
-		double[] expectedMagPMF = compute1DPMFThroughMonteCarlo("magnitude",
-				magBinEdges);
+		
+		double[] expectedMagPMF = disCalcMC.getMagnitudePMF();
 
 		for (int i = 0; i < computedMagPMF.length; i++) {
 			System.out.println("mag: " + (magBinEdges[i] + magBinEdges[i + 1])
@@ -127,16 +112,15 @@ public class DisaggregationCalculatorTest {
 	}
 
 	/**
-	 * The distance PMF is checked against the magnitude PMF computed using
-	 * Monte Carlo approach.
+	 * The distance PMF is checked against the distance PMF computed using Monte
+	 * Carlo approach.
 	 */
 	@Test
 	public void getDistancePMFTest() {
 
 		double[] computedDistancePMF = disCalc.getDistancePMF();
-
-		double[] expectedDistancePMF = compute1DPMFThroughMonteCarlo(
-				"distance", distanceBinEdges);
+		
+		double[] expectedDistancePMF = disCalcMC.getDistancePMF();
 
 		for (int i = 0; i < computedDistancePMF.length; i++) {
 			System.out.println("distance (km): "
@@ -147,102 +131,15 @@ public class DisaggregationCalculatorTest {
 		}
 	}
 
-	// for each magnitude bin, compute:
-	// P(M=m | IML >x) = lambda(IML > x, M =m) / lambda (IML > x)
-	// loop over ruptures. For each rupture, compute ground motion field
-	// realization in the site of interest. Then check if the simulated
-	// ground motion field gives a value greater than the ground motion
-	// value corresponding to the probability of interest.
-	// lambda(IML > x, M =m) is given by the number of ruptures with
-	// magnitude inside the considered magnitude bin, and that produce a
-	// ground motion value greater then the ground motion value of interest.
-	// lambda (IML > x) is the number of ruptures which produce a ground
-	// motion value greater than the one of interest (indipendently of the
-	// magnitude)
-	private double[] compute1DPMFThroughMonteCarlo(String paramName,
-			double[] paramBinEdges) {
-		double[] pmf = new double[paramBinEdges.length - 1];
-		List<Site> sites = new ArrayList<Site>();
-		sites.add(site);
-		for (int i = 0; i < pmf.length; i++) {
+	/**
+	 * The tectonic region type PMF is checked against the tectonic region type
+	 * PMF computed using Monte Carlo approach.
+	 */
+	@Test
+	public void getTectonicRegionTypePMFTest() {
 
-			double numRuptureWithGivenM = 0.0;
-			double numRupture = 0.0;
-
-			for (EqkRupture rup : ses) {
-
-				// check if the rupture is inside the ranges considered
-				// find closest point in the rupture area
-				Location closestLoc = disCalc.getClosestLocation(site,
-						rup.getRuptureSurface());
-
-				ScalarIntensityMeasureRelationshipAPI imr = imrMap.get(rup
-						.getTectRegType());
-				imr.setSite(site);
-				imr.setEqkRupture(rup);
-				imr.setIntensityMeasureLevel(groundMotionValue);
-
-				double lat = closestLoc.getLatitude();
-				double lon = closestLoc.getLongitude();
-				double magnitude = rup.getMag();
-				double epsilon = imr.getEpsilon();
-				String tectonicRegionType = rup.getTectRegType().toString();
-
-				// if one of the parameters (latitude, longitude, magnitude,
-				// epsilon) is outside of
-				// the considered range do not include in the conditional
-				// probability calculation, that is skip the rupture
-				if (lat < latBinEdges[0]
-						|| lat >= latBinEdges[latBinEdges.length - 1]) {
-					continue;
-				}
-				if (lon < lonBinEdges[0]
-						|| lon >= lonBinEdges[lonBinEdges.length - 1]) {
-					continue;
-				}
-				if (magnitude < magBinEdges[0]
-						|| magnitude >= magBinEdges[magBinEdges.length - 1]) {
-					continue;
-				}
-				if (epsilon < epsilonBinEdges[0]
-						|| epsilon >= epsilonBinEdges[epsilonBinEdges.length - 1]) {
-					continue;
-				}
-
-				// compute ground motion field
-				ScalarIntensityMeasureRelationshipAPI attenRel = imrMap.get(rup
-						.getTectRegType());
-				GroundMotionFieldCalculator gmfCalc = new GroundMotionFieldCalculator(
-						attenRel, rup, sites);
-				Map<Site, Double> gmf = gmfCalc
-						.getUncorrelatedGroundMotionField(rn);
-				double gmfv = gmf.get(site);
-
-				// check that the value is greater than the value of interest
-				if (gmfv > groundMotionValue) {
-					numRupture = numRupture + 1;
-
-					double param;
-					if (paramName.equalsIgnoreCase("magnitude")) {
-						param = magnitude;
-					} else if (paramName.equalsIgnoreCase("distance")) {
-						param = LocationUtils.horzDistance(site.getLocation(),
-								new Location(lat, lon));
-					} else {
-						throw new RuntimeException(
-								"parameter name not recognized!!");
-					}
-					if (param >= paramBinEdges[i]
-							&& param < paramBinEdges[i + 1]) {
-						numRuptureWithGivenM = numRuptureWithGivenM + 1;
-					}
-				}
-			}
-
-			double expectedProbability = numRuptureWithGivenM / numRupture;
-			pmf[i] = expectedProbability;
-		}
-		return pmf;
+		double[] computedTectonicRegionTypePMF = disCalc
+				.getTectonicRegionTypePMF();
 	}
 
 	private List<Double> getTestImlVals() {
