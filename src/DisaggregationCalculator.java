@@ -41,25 +41,35 @@ import org.opensha.sha.util.TectonicRegionType;
  * - getMagnitudePMF(): returns the 1D marginal probability mass function (PMF)
  * for magnitude
  * 
- * - getDistancePMF(): returns the 1D marginal probability mass function (PMF)
- * for distance (where distance is the closest distance to the surface
- * projection of the rupture area)
+ * - getDistancePMF(): returns the 1D PMF for distance (where distance is the
+ * closest distance to the surface projection of the rupture area)
  * 
- * -getTectonicRegionTypePMF(): returns the 1D marginal probability mass
- * function (PMF) for tectonic region type
+ * -getTectonicRegionTypePMF(): returns the 1D PMF for tectonic region type
  * 
- * - getMagnitudeDistancePMF(): returns the 2d marginal probability mass
- * function (PMF) for magnitude and distance (again closest distance to the
- * surface projection of the rupture area)
+ * -getMagnitudeTectonicRegionTypePMF(): returns the 2D PMF for magnitude and
+ * tectonic region type
  * 
- * - getMagnitudeDistanceEpsilonPMF(): returns the 3d marginal probability mass
- * function (PMF) for magnitude, distance, epsilon.
+ * - getMagnitudeDistancePMF(): returns the 2D PMF for magnitude and distance
  * 
- * - getLatitudeLongitudePMF(): return the 2d marginal probability mass function
- * (PMF) for latitude and longitude
+ * - getMagnitudeDistanceEpsilonPMF(): returns the 3D PMF for magnitude,
+ * distance, epsilon.
  * 
- * - getMagnitudeTectonicRegionTypePMF(): return the 2d marginal probability
- * mass function (PMF) for magnitude and tectonic region type
+ * - getLatitudeLongitudePMF(): return the 2D PMF for latitude and longitude
+ * 
+ * - getLatitudeLongitudeMagnitudePMF(): return the 3D PMF for latitude and
+ * longitude and magnitude
+ * 
+ * - getLatitudeLongitudeEpsilonPMF(): return the 3D PMF for latitude and
+ * longitude and epsilon
+ * 
+ * - getLatitudeLongitudeMagnitudeEpsilonPMF(): return the 4D PMF for latitude,
+ * longitude, magnitude and epsilon
+ * 
+ * - getLatitudeLongitudeTectonicRegionTypePMF(): return the 3D PMF for
+ * latitude, longitude and tectonic region type
+ * 
+ * - getLatituteLongitudeMagnitudeEpsilonTectonicRegionTypePMF(): return the
+ * full 5D disaggregation matrix.
  * 
  * @author damianomonelli
  * 
@@ -137,8 +147,6 @@ public class DisaggregationCalculator {
 		} catch (Exception e) {
 			throw new RuntimeException(e.toString());
 		}
-
-		initializeDisaggregationMatrix();
 
 		double totalAnnualRate = 0.0;
 
@@ -230,21 +238,6 @@ public class DisaggregationCalculator {
 		}
 	}
 
-	private void initializeDisaggregationMatrix() {
-		// initialize disaggregation matrix
-		for (int i = 0; i < latBinEdges.length - 1; i++) {
-			for (int j = 0; j < lonBinEdges.length - 1; j++) {
-				for (int k = 0; k < magBinEdges.length - 1; k++) {
-					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
-						for (int m = 0; m < tectonicRegionTypes.length; m++) {
-							disaggregationMatrix[i][j][k][l][m] = 0.0;
-						}
-					}
-				}
-			}
-		}
-	}
-
 	private boolean isInsideRange(double lat, double lon, double magnitude,
 			double epsilon) {
 		if (lat < latBinEdges[0] || lat >= latBinEdges[latBinEdges.length - 1]) {
@@ -304,11 +297,8 @@ public class DisaggregationCalculator {
 	public double[] getMagnitudePMF() {
 
 		double[] magPFM = new double[magBinEdges.length - 1];
-		for (int i = 0; i < magPFM.length; i++) {
-			magPFM[i] = 0.0;
-		}
 
-		for (int i = 0; i < magPFM.length; i++) {
+		for (int i = 0; i < magBinEdges.length - 1; i++) {
 			for (int j = 0; j < latBinEdges.length - 1; j++) {
 				for (int k = 0; k < lonBinEdges.length - 1; k++) {
 					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
@@ -326,9 +316,6 @@ public class DisaggregationCalculator {
 
 	public double[] getDistancePMF() {
 		double[] distPFM = new double[distanceBinEdges.length - 1];
-		for (int i = 0; i < distPFM.length; i++) {
-			distPFM[i] = 0.0;
-		}
 
 		for (int i = 0; i < latBinEdges.length - 1; i++) {
 			for (int j = 0; j < lonBinEdges.length - 1; j++) {
@@ -364,52 +351,201 @@ public class DisaggregationCalculator {
 
 	public double[] getTectonicRegionTypePMF() {
 		double[] trtPFM = new double[tectonicRegionTypes.length];
+
+		for (int i = 0; i < tectonicRegionTypes.length; i++) {
+			for (int j = 0; j < latBinEdges.length - 1; j++) {
+				for (int k = 0; k < lonBinEdges.length - 1; k++) {
+					for (int l = 0; l < magBinEdges.length - 1; l++) {
+						for (int m = 0; m < epsilonBinEdges.length - 1; m++) {
+							trtPFM[i] = trtPFM[i]
+									+ disaggregationMatrix[j][k][l][m][i];
+						}
+					}
+				}
+			}
+		}
 		return trtPFM;
 	}
 
-	public Location getClosestLocation(Site site,
-			EvenlyGriddedSurfaceAPI rupSurf) {
-		Location closestLoc = null;
-		double closestDistance = Double.MAX_VALUE;
-		for (Location loc : rupSurf.getLocationList()) {
-			double distance = Math
-					.sqrt(Math.pow(
-							LocationUtils.horzDistance(site.getLocation(), loc),
-							2)
-							+ Math.pow(
-									LocationUtils.vertDistance(
-											site.getLocation(), loc), 2));
-			if (distance < closestDistance) {
-				closestDistance = distance;
-				closestLoc = loc;
+	public double[][] getMagnitudeTectonicRegionTypePMF() {
+		double[][] magTrtPMF = new double[magBinEdges.length - 1][tectonicRegionTypes.length];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							magTrtPMF[k][m] = magTrtPMF[k][m]
+									+ disaggregationMatrix[i][j][k][l][m];
+						}
+					}
+				}
 			}
 		}
-		return closestLoc;
+		return magTrtPMF;
 	}
 
-	public double computeGroundMotionValue(
-			double probExceed,
-			Site site,
-			EqkRupForecastAPI erf,
-			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
-			List<Double> imlVals) throws RemoteException {
-		double groundMotionValue;
-		DiscretizedFuncAPI hazardCurve = new ArbitrarilyDiscretizedFunc();
-		for (double val : imlVals)
-			hazardCurve.set(val, 1.0);
-		HazardCurveCalculator hcc = new HazardCurveCalculator();
-		hcc.getHazardCurve(hazardCurve, site, imrMap, erf);
-		// this assumes that the hazard curves values (imlVals) are in ascending
-		// order
-		// TODO: check for this
-		if (probExceed > hazardCurve.getY(0)) {
-			groundMotionValue = hazardCurve.getX(0);
-		} else if (probExceed < hazardCurve.getY(hazardCurve.getNum() - 1)) {
-			groundMotionValue = hazardCurve.getX(hazardCurve.getNum() - 1);
-		} else {
-			groundMotionValue = hazardCurve.getFirstInterpolatedX(probExceed);
+	public double[][] getMagnitudeDistancePMF() {
+		double[][] magDistPMF = new double[magBinEdges.length - 1][distanceBinEdges.length - 1];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							double meanLat = (latBinEdges[i] + latBinEdges[i + 1]) / 2;
+							double meanLon = (lonBinEdges[j] + lonBinEdges[j + 1]) / 2;
+							double distance = LocationUtils.horzDistance(site
+									.getLocation(), new Location(meanLat,
+									meanLon));
+							if (distance < distanceBinEdges[0]
+									|| distance > distanceBinEdges[distanceBinEdges.length - 1]) {
+								continue;
+							} else {
+								int ii = 0;
+								for (ii = 0; ii < distanceBinEdges.length - 1; ii++) {
+									if (distance >= distanceBinEdges[ii]
+											&& distance < distanceBinEdges[ii + 1])
+										break;
+								}
+								magDistPMF[k][ii] = magDistPMF[k][ii]
+										+ disaggregationMatrix[i][j][k][l][m];
+							}
+						}
+					}
+				}
+			}
 		}
-		return groundMotionValue;
+
+		return magDistPMF;
+	}
+
+	public double[][][] getMagnitudeDistanceEpsilonPMF() {
+		double[][][] magDistEpsilonPMF = new double[magBinEdges.length - 1][distanceBinEdges.length - 1][epsilonBinEdges.length - 1];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							double meanLat = (latBinEdges[i] + latBinEdges[i + 1]) / 2;
+							double meanLon = (lonBinEdges[j] + lonBinEdges[j + 1]) / 2;
+							double distance = LocationUtils.horzDistance(site
+									.getLocation(), new Location(meanLat,
+									meanLon));
+							if (distance < distanceBinEdges[0]
+									|| distance > distanceBinEdges[distanceBinEdges.length - 1]) {
+								continue;
+							} else {
+								int ii = 0;
+								for (ii = 0; ii < distanceBinEdges.length - 1; ii++) {
+									if (distance >= distanceBinEdges[ii]
+											&& distance < distanceBinEdges[ii + 1])
+										break;
+								}
+								magDistEpsilonPMF[k][ii][l] = magDistEpsilonPMF[k][ii][l]
+										+ disaggregationMatrix[i][j][k][l][m];
+							}
+						}
+					}
+				}
+			}
+		}
+		return magDistEpsilonPMF;
+	}
+
+	public double[][] getLatitudeLongitudePMF() {
+		double[][] latLonPMF = new double[latBinEdges.length - 1][lonBinEdges.length - 1];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							latLonPMF[i][j] = latLonPMF[i][j]
+									+ disaggregationMatrix[i][j][k][l][m];
+						}
+					}
+				}
+			}
+		}
+		return latLonPMF;
+	}
+
+	public double[][][] getLatitudeLongitudeMagnitudePMF() {
+		double[][][] latLonMagPMF = new double[latBinEdges.length - 1][lonBinEdges.length - 1][magBinEdges.length - 1];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							latLonMagPMF[i][j][k] = latLonMagPMF[i][j][k]
+									+ disaggregationMatrix[i][j][k][l][m];
+						}
+					}
+				}
+			}
+		}
+		return latLonMagPMF;
+	}
+
+	public double[][][] getLatitudeLongitudeEpsilonPMF() {
+		double[][][] latLonEpsilonPMF = new double[latBinEdges.length - 1][lonBinEdges.length - 1][epsilonBinEdges.length - 1];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							latLonEpsilonPMF[i][j][l] = latLonEpsilonPMF[i][j][l]
+									+ disaggregationMatrix[i][j][k][l][m];
+						}
+					}
+				}
+			}
+		}
+		return latLonEpsilonPMF;
+	}
+
+	public double[][][][] getLatitudeLongitudeMagnitudeEpsilonPMF() {
+		double[][][][] latLonMagEpsilonPMF = new double[latBinEdges.length - 1][lonBinEdges.length - 1][magBinEdges.length - 1][epsilonBinEdges.length - 1];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							latLonMagEpsilonPMF[i][j][k][l] = latLonMagEpsilonPMF[i][j][k][l]
+									+ disaggregationMatrix[i][j][k][l][m];
+						}
+					}
+				}
+			}
+		}
+		return latLonMagEpsilonPMF;
+	}
+
+	public double[][][] getLatitudeLongitudeTectonicRegionTypePMF() {
+		double[][][] latLonTrtPMF = new double[latBinEdges.length - 1][lonBinEdges.length - 1][tectonicRegionTypes.length];
+
+		for (int i = 0; i < latBinEdges.length - 1; i++) {
+			for (int j = 0; j < lonBinEdges.length - 1; j++) {
+				for (int k = 0; k < magBinEdges.length - 1; k++) {
+					for (int l = 0; l < epsilonBinEdges.length - 1; l++) {
+						for (int m = 0; m < tectonicRegionTypes.length; m++) {
+							latLonTrtPMF[i][j][m] = latLonTrtPMF[i][j][m]
+									+ disaggregationMatrix[i][j][k][l][m];
+						}
+					}
+				}
+			}
+		}
+		return latLonTrtPMF;
+	}
+
+	public double[][][][][] getLatitudeLongitudeMagnitudeEpsilonTectonicRegionTypePMF() {
+		return disaggregationMatrix;
 	}
 
 	/**
