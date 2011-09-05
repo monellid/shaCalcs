@@ -29,6 +29,7 @@ public class UniformHazardSpectrumCalculator {
 	private EqkRupForecastAPI erf;
 	private Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap;
 	private List<Double> imlVals;
+	private double maxDistance;
 
 	/**
 	 * Construct a UHS calculator for a specified list of periods.The erf,
@@ -42,14 +43,14 @@ public class UniformHazardSpectrumCalculator {
 			double[] periods,
 			EqkRupForecastAPI erf,
 			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
-			List<Double> imlVals) {
+			List<Double> imlVals, double maxDistance) {
 		this.periods = periods;
 		this.erf = erf;
 		this.imrMap = imrMap;
 		this.imlVals = imlVals;
+		this.maxDistance = maxDistance;
 
-		// TODO: check also that the erf is poissonian
-		validateInput(periods[periods.length - 1]);
+		validateInput();
 	}
 
 	/**
@@ -74,9 +75,17 @@ public class UniformHazardSpectrumCalculator {
 		for (int is = 0; is < erf.getNumSources(); is++) {
 
 			ProbEqkSource src = erf.getSource(is);
-			TectonicRegionType tectonicRegionType = src.getTectonicRegionType();
 
-			// extract imr to be used, and set params
+			// compute the source's distance from the site and skip if it's too
+			// far away
+			double distance = src.getMinDistance(site);
+			if (distance > maxDistance) {
+				continue;
+			}
+
+			// extract imr to be used in terms of tectonic region type, and set
+			// params
+			TectonicRegionType tectonicRegionType = src.getTectonicRegionType();
 			ScalarIntensityMeasureRelationshipAPI imr = imrMap
 					.get(tectonicRegionType);
 			if (imr == null) {
@@ -86,7 +95,7 @@ public class UniformHazardSpectrumCalculator {
 			}
 			imr.setSite(site);
 
-			// extract period list
+			// extract period list supported by the selected GMPE
 			SA_Param sa = (SA_Param) imr.getParameter(SA_Param.NAME);
 			PeriodParam periodParam = sa.getPeriodParam();
 			ArrayList<Double> periodList = periodParam.getAllowedDoubles();
@@ -94,9 +103,22 @@ public class UniformHazardSpectrumCalculator {
 			for (int ir = 0; ir < src.getNumRuptures(); ir++) {
 
 				ProbEqkRupture rup = src.getRupture(ir);
-				imr.setEqkRupture(rup);
-
 				double rupProb = rup.getProbability();
+				/*
+				 * First make sure the probability isn't 1.0 (or too close);
+				 * otherwise rates are infinite and all IMLs will be exceeded
+				 * (because of ergodic assumption). This can happen if the
+				 * number of expected events (over the timespan) exceeds ~37,
+				 * because at this point 1.0-Math.exp(-num) = 1.0 by numerical
+				 * precision (and thus, an infinite number of events). The
+				 * number 30 used in the check below provides a safe margin.
+				 */
+				if (Math.log(1.0 - rupProb) < -30.0)
+					throw new RuntimeException(
+							"Error: The probability for this ProbEqkRupture ("
+									+ rupProb
+									+ ") is too high for a Possion source (~infinite number of events)");
+				imr.setEqkRupture(rup);
 
 				// compute probabilities of exceedence for the periods of
 				// interest
@@ -112,8 +134,8 @@ public class UniformHazardSpectrumCalculator {
 					// in case the period is equal to one of the supported
 					// periods
 					else if (periodParam.isAllowed(period)) {
-						computeHazardCurveForSA(hazCurvesPerPeriod, imr,
-								rupProb, period);
+						computeHazardCurveForSupportedSAPeriod(
+								hazCurvesPerPeriod, imr, rupProb, period);
 
 					} // if it is between PGA and the first SA
 					else if (period > 0.0 && period < periodList.get(0)) {
@@ -125,12 +147,33 @@ public class UniformHazardSpectrumCalculator {
 						computeHazardCurveForInterpolatedPeriod(
 								hazCurvesPerPeriod, imr, periodList, rupProb,
 								period);
-
 					}
 				}
 
 			}
 
+		}
+
+		// finalize hazard curves calculations
+		for (DiscretizedFuncAPI hazCurve : hazCurvesPerPeriod.values()) {
+			for (int i = 0; i < hazCurve.getNum(); i++) {
+				double val = hazCurve.getY(i);
+				hazCurve.set(i, 1 - val);
+			}
+		}
+
+		// extract UHS from hazard curves
+		for (double period : hazCurvesPerPeriod.keySet()) {
+			DiscretizedFuncAPI hazardCurve = hazCurvesPerPeriod.get(period);
+			double groundMotionValue = CalculatorsUtils
+					.getGroundMotionValueForPoE(poE, hazardCurve);
+			// find period index
+			for (int i = 0; i < periods.length; i++) {
+				if (period == periods[i]) {
+					uhs[i] = groundMotionValue;
+					break;
+				}
+			}
 		}
 
 		return uhs;
@@ -140,7 +183,7 @@ public class UniformHazardSpectrumCalculator {
 			Map<Double, DiscretizedFuncAPI> hazCurvesPerPeriod,
 			ScalarIntensityMeasureRelationshipAPI imr,
 			ArrayList<Double> periodList, double rupProb, double period) {
-		
+
 		// find the two closest periods and compute the
 		// probability of exceedence by interpolating the
 		// probabilities of exceedence of the closest periods
@@ -155,15 +198,13 @@ public class UniformHazardSpectrumCalculator {
 
 			// compute probabilities of exceedence for the two
 			// closest periods
-			imr.getParameter(PeriodParam.NAME)
-					.setValue(period1);
+			imr.getParameter(PeriodParam.NAME).setValue(period1);
 			double probExc1 = imr.getExceedProbability();
-			imr.getParameter(PeriodParam.NAME)
-					.setValue(period2);
+			imr.getParameter(PeriodParam.NAME).setValue(period2);
 			double probExc2 = imr.getExceedProbability();
 
-			double probExc = getInterpolatedProb(period,
-					period1, period2, probExc1, probExc2);
+			double probExc = getInterpolatedProb(period, period1, period2,
+					probExc1, probExc2);
 
 			computeHazardCurve(hazCurvesPerPeriod, rupProb, period, i, probExc);
 		}
@@ -172,19 +213,15 @@ public class UniformHazardSpectrumCalculator {
 	private void computeHazardCurve(
 			Map<Double, DiscretizedFuncAPI> hazCurvesPerPeriod, double rupProb,
 			double period, int i, double probExc) {
-		double hazCurveValue = hazCurvesPerPeriod.get(
-				period).getY(i);
-		hazCurvesPerPeriod.get(period).set(
-				i,
-				hazCurveValue
-						* Math.pow(1 - rupProb, probExc));
+		double hazCurveValue = hazCurvesPerPeriod.get(period).getY(i);
+		hazCurvesPerPeriod.get(period).set(i,
+				hazCurveValue * Math.pow(1 - rupProb, probExc));
 	}
 
 	private int getPeriodIndex(ArrayList<Double> periodList, double period) {
 		int ii;
 		for (ii = 0; ii < periodList.size(); ii++) {
-			if (period > periodList.get(ii)
-					&& period < periodList.get(ii + 1)) {
+			if (period > periodList.get(ii) && period < periodList.get(ii + 1)) {
 				break;
 			}
 		}
@@ -217,7 +254,7 @@ public class UniformHazardSpectrumCalculator {
 		}
 	}
 
-	private void computeHazardCurveForSA(
+	private void computeHazardCurveForSupportedSAPeriod(
 			Map<Double, DiscretizedFuncAPI> hazCurvesPerPeriod,
 			ScalarIntensityMeasureRelationshipAPI imr, double rupProb,
 			double period) {
@@ -266,8 +303,12 @@ public class UniformHazardSpectrumCalculator {
 
 	// check that the specified GMPEs provide spectral accelerations
 	// that cover the range of periods for UHS calculation
-	private void validateInput(double maxPeriod) {
+	// check also that the erf contains only poissonian sources
+	private void validateInput() {
 
+		CalculatorsUtils.ensurePoissonian(erf);
+
+		double maxPeriod = periods[periods.length - 1];
 		for (ScalarIntensityMeasureRelationshipAPI imr : imrMap.values()) {
 
 			// get list of supported periods

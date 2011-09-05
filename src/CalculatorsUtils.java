@@ -1,4 +1,5 @@
 import java.rmi.RemoteException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -9,11 +10,38 @@ import org.opensha.commons.geo.Location;
 import org.opensha.commons.geo.LocationUtils;
 import org.opensha.sha.calc.HazardCurveCalculator;
 import org.opensha.sha.earthquake.EqkRupForecastAPI;
+import org.opensha.sha.earthquake.ProbEqkSource;
 import org.opensha.sha.faultSurface.EvenlyGriddedSurfaceAPI;
 import org.opensha.sha.imr.ScalarIntensityMeasureRelationshipAPI;
+import org.opensha.sha.imr.param.OtherParams.StdDevTypeParam;
 import org.opensha.sha.util.TectonicRegionType;
 
-public class DisaggregationUtils {
+public class CalculatorsUtils {
+
+	/**
+	 * Ensure ERF contains only Poissonian sources
+	 */
+	public static void ensurePoissonian(EqkRupForecastAPI erf) {
+		for (ProbEqkSource src : (ArrayList<ProbEqkSource>) erf.getSourceList())
+			if (src.isSourcePoissonian() == false)
+				throw new IllegalArgumentException("Sources must be Poissonian");
+	}
+
+	/**
+	 * Ensure non-zero standard deviation in
+	 * {@link ScalarIntensityMeasureRelationshipAPI} map
+	 */
+	public static void ensureNonZeroStd(
+			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap) {
+		for (ScalarIntensityMeasureRelationshipAPI imr : imrMap.values()) {
+			String stdDevType = (String) imr.getParameter(StdDevTypeParam.NAME)
+					.getValue();
+			if (stdDevType.equalsIgnoreCase(StdDevTypeParam.STD_DEV_TYPE_NONE)) {
+				throw new RuntimeException(
+						"Attenuation relationship must have a non-zero standard deviation");
+			}
+		}
+	}
 
 	// compute ground motion value corresponding to probability of exceedance
 	public static double computeGroundMotionValue(
@@ -21,16 +49,23 @@ public class DisaggregationUtils {
 			Site site,
 			EqkRupForecastAPI erf,
 			Map<TectonicRegionType, ScalarIntensityMeasureRelationshipAPI> imrMap,
-			List<Double> imlVals) throws RemoteException {
-		double groundMotionValue;
+			List<Double> imlVals) {
 		DiscretizedFuncAPI hazardCurve = new ArbitrarilyDiscretizedFunc();
 		for (double val : imlVals)
 			hazardCurve.set(val, 1.0);
-		HazardCurveCalculator hcc = new HazardCurveCalculator();
-		hcc.getHazardCurve(hazardCurve, site, imrMap, erf);
-		// this assumes that the hazard curves values (imlVals) are in ascending
-		// order
-		// TODO: check for this
+		HazardCurveCalculator hcc;
+		try {
+			hcc = new HazardCurveCalculator();
+			hcc.getHazardCurve(hazardCurve, site, imrMap, erf);
+		} catch (Exception e) {
+			throw new RuntimeException(e.toString());
+		}
+		return getGroundMotionValueForPoE(probExceed, hazardCurve);
+	}
+
+	public static double getGroundMotionValueForPoE(double probExceed,
+			DiscretizedFuncAPI hazardCurve) {
+		double groundMotionValue;
 		if (probExceed > hazardCurve.getY(0)) {
 			groundMotionValue = hazardCurve.getX(0);
 		} else if (probExceed < hazardCurve.getY(hazardCurve.getNum() - 1)) {
