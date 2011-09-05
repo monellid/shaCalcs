@@ -17,7 +17,7 @@ import org.opensha.sha.util.TectonicRegionType;
 
 /**
  * Class implementing Uniform Hazard Spectrum (UHS) calculator. A UHS is defined
- * as spectral acceleration amplitudes, for a given number of periods,
+ * as a set of spectral acceleration amplitudes, for a given number of periods,
  * corresponding to a given probability of exceedence.
  * 
  * @author damianomonelli

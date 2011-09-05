@@ -43,7 +43,11 @@ public class CalculatorsUtils {
 		}
 	}
 
-	// compute ground motion value corresponding to probability of exceedance
+	/**
+	 * compute ground motion value corresponding to probability of exceedance on
+	 * a site, given an earthquake rupture forecast, a GMPE map, and a list of
+	 * IML values.
+	 */
 	public static double computeGroundMotionValue(
 			double probExceed,
 			Site site,
@@ -63,6 +67,10 @@ public class CalculatorsUtils {
 		return getGroundMotionValueForPoE(probExceed, hazardCurve);
 	}
 
+	/**
+	 * Extract ground motion value corresponding to a probability of Exceedence
+	 * from hazard curve.
+	 */
 	public static double getGroundMotionValueForPoE(double probExceed,
 			DiscretizedFuncAPI hazardCurve) {
 		double groundMotionValue;
@@ -76,7 +84,8 @@ public class CalculatorsUtils {
 		return groundMotionValue;
 	}
 
-	// compute rupture closest location to site
+	/** Compute rupture's closest location to site.
+	 */
 	public static Location getClosestLocation(Site site,
 			EvenlyGriddedSurfaceAPI rupSurf) {
 		Location closestLoc = null;
