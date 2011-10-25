@@ -106,9 +106,12 @@ public class CalculatorsTestHelper {
 
 		ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
 		srcList.add(getTestSourceDataActiveShallow());
-		srcList.add(getTestSourceDataStableCrust());
+		//srcList.add(getTestSourceDataStableCrust());
 		double timeSpan = 50.0;
-		return GEM1ERF.getGEM1ERF(srcList, timeSpan);
+		GEM1ERF erf = GEM1ERF.getGEM1ERF(srcList, timeSpan);
+		erf.getParameter(GEM1ERF.AREA_SRC_DISCR_PARAM_NAME).setValue(0.01);
+		erf.updateForecast();
+		return erf;//GEM1ERF.getGEM1ERF(srcList, timeSpan);
 	}
 
 	public static GEMSourceData getTestSourceDataActiveShallow() {
@@ -121,7 +124,7 @@ public class CalculatorsTestHelper {
 		border.add(new Location(0.5, -0.5));
 		border.add(new Location(0.5, 0.5));
 		border.add(new Location(-0.5, 0.5));
-		Region reg = new Region(border, BorderType.GREAT_CIRCLE);
+		Region reg = new Region(border, BorderType.MERCATOR_LINEAR);
 		double bValue = 1.0;
 		double totCumRate = 0.2;
 		double min = 5.05;
@@ -132,6 +135,8 @@ public class CalculatorsTestHelper {
 		double strike = 0.0;
 		double dip = 90.0;
 		double rake = 0.0;
+		System.out.println("delta: "+magDist.getDelta());
+		System.out.println("a value: "+magDist.get_aValue());
 		FocalMechanism focalMechanism = new FocalMechanism(strike, dip, rake);
 		MagFreqDistsForFocalMechs magfreqDistFocMech = new MagFreqDistsForFocalMechs(
 				magDist, focalMechanism);
