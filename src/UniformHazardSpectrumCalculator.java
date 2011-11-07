@@ -13,6 +13,7 @@ import org.opensha.sha.imr.ScalarIntensityMeasureRelationshipAPI;
 import org.opensha.sha.imr.param.IntensityMeasureParams.PGA_Param;
 import org.opensha.sha.imr.param.IntensityMeasureParams.PeriodParam;
 import org.opensha.sha.imr.param.IntensityMeasureParams.SA_Param;
+import org.opensha.sha.imr.param.OtherParams.TectonicRegionTypeParam;
 import org.opensha.sha.util.TectonicRegionType;
 
 /**
@@ -54,12 +55,14 @@ public class UniformHazardSpectrumCalculator {
 	}
 
 	/**
-	 * Returns a UHS for a site and probability of exceedence.
+	 * Returns a set of UHSs for a site and a list of probabilities of
+	 * exceedence.
 	 */
-	public double[] getUHS(double poE, Site site) {
+	public List<double[]> getUHS(double[] poEs, Site site) {
 
 		// UHS
-		double[] uhs = new double[periods.length];
+		List<double[]> uhsSet = new ArrayList<double[]>();// new
+															// double[periods.length];
 
 		// map containing hazard curves for each period
 		Map<Double, DiscretizedFuncAPI> hazCurvesPerPeriod = new HashMap<Double, DiscretizedFuncAPI>();
@@ -84,7 +87,7 @@ public class UniformHazardSpectrumCalculator {
 			}
 
 			// extract imr to be used in terms of tectonic region type, and set
-			// params
+			// tectonic region type, maximum distance and site
 			TectonicRegionType tectonicRegionType = src.getTectonicRegionType();
 			ScalarIntensityMeasureRelationshipAPI imr = imrMap
 					.get(tectonicRegionType);
@@ -93,6 +96,14 @@ public class UniformHazardSpectrumCalculator {
 						+ tectonicRegionType.toString()
 						+ ". Not able to continue calculation.");
 			}
+			if (imr.isTectonicRegionSupported(tectonicRegionType.toString())) {
+				imr.getParameter(TectonicRegionTypeParam.NAME).setValue(
+						tectonicRegionType.toString());
+			} else { // set to the default value
+				imr.getParameter(TectonicRegionTypeParam.NAME)
+						.setValueAsDefault();
+			}
+			imr.setUserMaxDistance(maxDistance);
 			imr.setSite(site);
 
 			// extract period list supported by the selected GMPE
@@ -162,21 +173,25 @@ public class UniformHazardSpectrumCalculator {
 			}
 		}
 
+		// for each period
 		// extract UHS from hazard curves
-		for (double period : hazCurvesPerPeriod.keySet()) {
-			DiscretizedFuncAPI hazardCurve = hazCurvesPerPeriod.get(period);
-			double groundMotionValue = CalculatorsUtils
-					.getGroundMotionValueForPoE(poE, hazardCurve);
-			// find period index
-			for (int i = 0; i < periods.length; i++) {
-				if (period == periods[i]) {
-					uhs[i] = groundMotionValue;
-					break;
+		for (int ip = 0; ip < poEs.length; ip++) {
+			double[] uhs = new double[periods.length];
+			for (double period : hazCurvesPerPeriod.keySet()) {
+				DiscretizedFuncAPI hazardCurve = hazCurvesPerPeriod.get(period);
+				double groundMotionValue = CalculatorsUtils
+						.getGroundMotionValueForPoE(poEs[ip], hazardCurve);
+				// find period index
+				for (int i = 0; i < periods.length; i++) {
+					if (period == periods[i]) {
+						uhs[i] = groundMotionValue;
+						break;
+					}
 				}
 			}
+			uhsSet.add(uhs);
 		}
-
-		return uhs;
+		return uhsSet;
 	}
 
 	private void computeHazardCurveForInterpolatedPeriod(

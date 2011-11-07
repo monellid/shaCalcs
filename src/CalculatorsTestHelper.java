@@ -106,12 +106,12 @@ public class CalculatorsTestHelper {
 
 		ArrayList<GEMSourceData> srcList = new ArrayList<GEMSourceData>();
 		srcList.add(getTestSourceDataActiveShallow());
-		//srcList.add(getTestSourceDataStableCrust());
+		srcList.add(getTestSourceDataStableCrust());
 		double timeSpan = 50.0;
-		GEM1ERF erf = GEM1ERF.getGEM1ERF(srcList, timeSpan);
-		erf.getParameter(GEM1ERF.AREA_SRC_DISCR_PARAM_NAME).setValue(0.01);
-		erf.updateForecast();
-		return erf;//GEM1ERF.getGEM1ERF(srcList, timeSpan);
+		//GEM1ERF erf = GEM1ERF.getGEM1ERF(srcList, timeSpan);
+		//erf.getParameter(GEM1ERF.AREA_SRC_DISCR_PARAM_NAME).setValue(0.01);
+		//erf.updateForecast();
+		return GEM1ERF.getGEM1ERF(srcList, timeSpan);
 	}
 
 	public static GEMSourceData getTestSourceDataActiveShallow() {

@@ -49,18 +49,20 @@ public class UniformHazardSpectrumCalculatorTest {
 	@Test
 	public void UHSOnSupportedSAPeriodsTest() {
 
-		double poE = 0.1;
+		double[] poE = new double[]{0.1, 0.02};
 
 		UniformHazardSpectrumCalculator uhsCalc = new UniformHazardSpectrumCalculator(
 				periods, erf, imrMap, imlVals, maxDistance);
 
-		double[] calculatedUHS = uhsCalc.getUHS(poE,
+		List<double[]> calculatedUHS = uhsCalc.getUHS(poE,
 				CalculatorsTestHelper.getTestSite());
 
-		double[] expectedUHS = computeExpectedUHSForSupportedSA(poE);
+		List<double[]> expectedUHS = computeExpectedUHSForSupportedSA(poE);
 
-		for (int i = 0; i < periods.length; i++) {
-			assertEquals(calculatedUHS[i], expectedUHS[i], 1e-5);
+		for(int ip=0;ip<poE.length;ip++){
+			for (int i = 0; i < periods.length; i++) {
+				assertEquals(calculatedUHS.get(ip)[i], expectedUHS.get(ip)[i], 1e-5);
+			}
 		}
 	}
 
@@ -70,7 +72,7 @@ public class UniformHazardSpectrumCalculatorTest {
 	@Test
 	public void UHSOnPGAAndSupportedSAPeriodsTest() {
 
-		double poE = 0.1;
+		double[] poE = new double[]{0.1,0.02};
 
 		double[] periods = new double[this.periods.length + 1];
 		periods[0] = 0.0;
@@ -81,14 +83,20 @@ public class UniformHazardSpectrumCalculatorTest {
 		UniformHazardSpectrumCalculator uhsCalc = new UniformHazardSpectrumCalculator(
 				periods, erf, imrMap, imlVals, maxDistance);
 
-		double[] calculatedUHS = uhsCalc.getUHS(poE,
+		List<double[]> calculatedUHS = uhsCalc.getUHS(poE,
 				CalculatorsTestHelper.getTestSite());
 
-		double[] expectedUHS = computeExpectedUHSForPGAAndSupportedSA(poE);
+		List<double[]> expectedUHS = computeExpectedUHSForPGAAndSupportedSA(poE);
 
-		for (int i = 0; i < periods.length; i++) {
-			assertEquals(calculatedUHS[i], expectedUHS[i], 1e-5);
+		for(int ip=0;ip<poE.length;ip++){
+			System.out.println("period: "+poE[ip]);
+			for (int i = 0; i < periods.length; i++) {
+				System.out.println("calculated UHS: "+Math.exp(calculatedUHS.get(ip)[i])+", expected: "+Math.exp(expectedUHS.get(ip)[i]));
+				assertEquals(calculatedUHS.get(ip)[i], expectedUHS.get(ip)[i], 1e-5);
+			}
+			System.out.println("\n");
 		}
+
 	}
 
 	/**
@@ -101,7 +109,7 @@ public class UniformHazardSpectrumCalculatorTest {
 	@Test
 	public void UHSOnInterpolatedSAPeriodsTest() {
 
-		double poE = 0.1;
+		double[] poE = new double[]{0.1, 0.02};
 
 		// these periods are not supported by the BA2008 gmpe used for the test
 		// and therefore require interpolation
@@ -110,78 +118,100 @@ public class UniformHazardSpectrumCalculatorTest {
 		UniformHazardSpectrumCalculator uhsCalc = new UniformHazardSpectrumCalculator(
 				periods, erf, imrMap, imlVals, maxDistance);
 
-		double[] calculatedUHS = uhsCalc.getUHS(poE,
+		List<double[]> calculatedUHS = uhsCalc.getUHS(poE,
 				CalculatorsTestHelper.getTestSite());
 
-		double[] expectedUHS = computeExpectedUHSForInterpolatedSA(poE);
+		List<double[]> expectedUHS = computeExpectedUHSForInterpolatedSA(poE);
 
-		for (int i = 0; i < calculatedUHS.length; i++) {
-			assertEquals(calculatedUHS[i], expectedUHS[i], 1e-1);
+		for(int ip=0;ip<poE.length;ip++){
+			for (int i = 0; i < periods.length; i++) {
+				assertEquals(calculatedUHS.get(ip)[i], expectedUHS.get(ip)[i], 1e-1);
+			}	
 		}
 
 	}
 
-	private double[] computeExpectedUHSForSupportedSA(double poE) {
-		double expectedUHS[] = new double[periods.length];
-		int periodIndex = 0;
-		for (double period : periods) {
-			setImrPeriod(period);
-			expectedUHS[periodIndex] = CalculatorsUtils
-					.computeGroundMotionValue(poE,
-							CalculatorsTestHelper.getTestSite(), erf, imrMap,
-							imlVals);
-			periodIndex = periodIndex + 1;
+	private List<double[]> computeExpectedUHSForSupportedSA(double[] poE) {
+		List<double[]> expectedUHSSet = new ArrayList<double[]>();
+		for(int i=0;i<poE.length;i++){
+			double[] expectedUHS = new double[periods.length];
+			int periodIndex = 0;
+			for (double period : periods) {
+				setImrPeriod(period);
+				expectedUHS[periodIndex] = CalculatorsUtils
+						.computeGroundMotionValue(poE[i],
+								CalculatorsTestHelper.getTestSite(), erf, imrMap,
+								imlVals);
+				periodIndex = periodIndex + 1;
+			}
+			expectedUHSSet.add(expectedUHS);
 		}
-		return expectedUHS;
+
+		return expectedUHSSet;
 	}
 
-	private double[] computeExpectedUHSForPGAAndSupportedSA(double poE) {
+	private List<double[]> computeExpectedUHSForPGAAndSupportedSA(double[] poE) {
 
-		double expectedUHS[] = new double[periods.length + 1];
+		List<double[]> expectedUHSSet = new ArrayList<double[]>();
+		
+		for(int i=0;i<poE.length;i++){
+			
+			double[] expectedUHS = new double[periods.length + 1];
+			
+			// compute UHS for PGA
+			for (ScalarIntensityMeasureRelationshipAPI imr : imrMap.values()) {
+				imr.setIntensityMeasure(PGA_Param.NAME);
+			}
+			expectedUHS[0] = CalculatorsUtils.computeGroundMotionValue(poE[i],
+					CalculatorsTestHelper.getTestSite(), erf, imrMap, imlVals);
 
-		// compute UHS for PGA
-		for (ScalarIntensityMeasureRelationshipAPI imr : imrMap.values()) {
-			imr.setIntensityMeasure(PGA_Param.NAME);
+			// compute UHS for SA periods
+			int periodIndex = 1;
+			for (double period : periods) {
+				setImrPeriod(period);
+				expectedUHS[periodIndex] = CalculatorsUtils
+						.computeGroundMotionValue(poE[i],
+								CalculatorsTestHelper.getTestSite(), erf, imrMap,
+								imlVals);
+				periodIndex = periodIndex + 1;
+			}
+			
+			expectedUHSSet.add(expectedUHS);
 		}
-		expectedUHS[0] = CalculatorsUtils.computeGroundMotionValue(poE,
-				CalculatorsTestHelper.getTestSite(), erf, imrMap, imlVals);
-
-		// compute UHS for SA periods
-		int periodIndex = 1;
-		for (double period : periods) {
-			setImrPeriod(period);
-			expectedUHS[periodIndex] = CalculatorsUtils
-					.computeGroundMotionValue(poE,
-							CalculatorsTestHelper.getTestSite(), erf, imrMap,
-							imlVals);
-			periodIndex = periodIndex + 1;
-		}
-		return expectedUHS;
+		
+		return expectedUHSSet;
 	}
 
-	private double[] computeExpectedUHSForInterpolatedSA(double poE) {
+	private List<double[]> computeExpectedUHSForInterpolatedSA(double[] poE) {
 
-		double expectedUHS[] = new double[periods.length];
+		List<double[]> expectedUHSSet = new ArrayList<double[]>();
+		
+		for(int i=0;i<poE.length;i++){
+			
+			double[] expectedUHS = new double[periods.length];
 
-		double period = 0.025;
-		double period1 = 0.02;
-		double period2 = 0.03;
-		double gmv = getInterpolatedUHSValue(poE, period, period1, period2);
-		expectedUHS[0] = gmv;
+			double period = 0.025;
+			double period1 = 0.02;
+			double period2 = 0.03;
+			double gmv = getInterpolatedUHSValue(poE[i], period, period1, period2);
+			expectedUHS[0] = gmv;
 
-		period = 0.45;
-		period1 = 0.4;
-		period2 = 0.5;
-		gmv = getInterpolatedUHSValue(poE, period, period1, period2);
-		expectedUHS[1] = gmv;
+			period = 0.45;
+			period1 = 0.4;
+			period2 = 0.5;
+			gmv = getInterpolatedUHSValue(poE[i], period, period1, period2);
+			expectedUHS[1] = gmv;
 
-		period = 2.5;
-		period1 = 2.0;
-		period2 = 3.0;
-		gmv = getInterpolatedUHSValue(poE, period, period1, period2);
-		expectedUHS[2] = gmv;
+			period = 2.5;
+			period1 = 2.0;
+			period2 = 3.0;
+			gmv = getInterpolatedUHSValue(poE[i], period, period1, period2);
+			expectedUHS[2] = gmv;	
+			
+			expectedUHSSet.add(expectedUHS);
+		}
 
-		return expectedUHS;
+		return expectedUHSSet;
 	}
 
 	private double getInterpolatedUHSValue(double poE, double period,
