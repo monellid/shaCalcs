@@ -87,7 +87,7 @@ public class UniformHazardSpectrumCalculator {
 			}
 
 			// extract imr to be used in terms of tectonic region type, and set
-			// tectonic region type, maximum distance and site
+			// maximum distance and site
 			TectonicRegionType tectonicRegionType = src.getTectonicRegionType();
 			ScalarIntensityMeasureRelationshipAPI imr = imrMap
 					.get(tectonicRegionType);
@@ -95,13 +95,6 @@ public class UniformHazardSpectrumCalculator {
 				throw new RuntimeException("GMPE not defined for "
 						+ tectonicRegionType.toString()
 						+ ". Not able to continue calculation.");
-			}
-			if (imr.isTectonicRegionSupported(tectonicRegionType.toString())) {
-				imr.getParameter(TectonicRegionTypeParam.NAME).setValue(
-						tectonicRegionType.toString());
-			} else { // set to the default value
-				imr.getParameter(TectonicRegionTypeParam.NAME)
-						.setValueAsDefault();
 			}
 			imr.setUserMaxDistance(maxDistance);
 			imr.setSite(site);
